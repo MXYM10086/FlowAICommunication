@@ -98,16 +98,38 @@ class CaptureForPanelActivity : ComponentActivity() {
         }
     }
 
-    /** Hands the recognised text back to the panel, then leaves the screen. */
+    /**
+     * Hands the recognised text straight back to the panel and leaves the screen alone.
+     *
+     * Previously this started MainActivity to deliver the result, which yanked the app to the
+     * foreground — so the user lost sight of what they were analysing and the *next* capture
+     * photographed FlowAI itself. Delivery does not need an Activity at all: the panel lives in
+     * this same process.
+     *
+     * Only when the service is gone (killed during the consent dialogs, which the panel cannot
+     * survive either) is MainActivity started, and then it exists solely to restart the service.
+     */
     private fun onFinished(text: String?, failure: String?) {
+        val message = when {
+            !text.isNullOrBlank() -> null
+            else -> failure ?: "这次截屏没有识别到文字，请让聊天内容完整显示后重试"
+        }
+
+        if (FloatingAssistantService.deliverCapture(text, message)) {
+            Log.i(TAG, "delivered to live panel; not starting any activity")
+            finish()
+            return
+        }
+
+        // Fallback: the service is gone, so restart it behind MainActivity and let MainActivity
+        // forward the result.
+        Log.w(TAG, "no live service; falling back to MainActivity")
         val intent = Intent(this, MainActivity::class.java).addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         )
         intent.putExtra(EXTRA_FROM_PANEL, true)
         text?.takeIf { it.isNotBlank() }?.let { intent.putExtra(EXTRA_CAPTURED_TEXT, it) }
-        if (text.isNullOrBlank()) {
-            intent.putExtra(EXTRA_FAILURE, failure ?: "这次截屏没有识别到文字，请让聊天内容完整显示后重试")
-        }
+        if (text.isNullOrBlank()) intent.putExtra(EXTRA_FAILURE, message)
         startActivity(intent)
         finish()
     }

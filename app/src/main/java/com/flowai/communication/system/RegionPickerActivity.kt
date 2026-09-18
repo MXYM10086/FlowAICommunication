@@ -12,11 +12,14 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.util.TypedValue
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import com.flowai.communication.domain.CaptureRegion
 import kotlin.math.abs
 import kotlin.math.max
@@ -38,6 +41,28 @@ class RegionPickerActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Window attributes are set explicitly rather than inherited from the theme.
+        //
+        // `Theme.Translucent.NoTitleBar` carries `windowIsFloating` on several ROMs, which made the
+        // picker a small non-focusable window: the activity reported as displayed and even received
+        // ACTION_DOWN, yet nothing was drawn and the screen looked frozen. Setting the layout and
+        // focus explicitly removes that dependency on theme behaviour.
+        window.apply {
+            setLayout(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+            addFlags(
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                    WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS
+            )
+            clearFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
+            decorView.systemUiVisibility =
+                decorView.systemUiVisibility or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+        }
+
         pickerView = RegionPickerView(this)
 
         val hint = TextView(this).apply {
@@ -46,6 +71,13 @@ class RegionPickerActivity : Activity() {
             setBackgroundColor(Color.parseColor("#CC000000"))
             setPadding(dp(16), dp(10), dp(16), dp(10))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
+        }
+        // The window is laid out edge to edge, so push the hint below the status bar using the
+        // system's own insets rather than reflecting on a private dimension resource.
+        ViewCompat.setOnApplyWindowInsetsListener(hint) { v, insets ->
+            val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+            v.setPadding(dp(16), dp(10) + bars.top, dp(16), dp(10))
+            insets
         }
         val cancel = Button(this).apply {
             text = getString(com.flowai.communication.R.string.region_cancel)

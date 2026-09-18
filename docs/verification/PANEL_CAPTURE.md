@@ -84,6 +84,36 @@ capture released → capture session released
 
 截图 `54-panel-capture-restored.png` 可见：面板恢复后**输入框里已填入识别出的文字**，Compose 状态完整保留。全程同一进程，未再出现进程回收。
 
+## 第二轮修复（0.7.1）—— 用户反馈"每次截屏分析都自动进入 app"
+
+用户反馈：做截屏分析时界面会跳到 FlowAI。日志证实了后果：
+
+```
+02:21:16.663  screen capture recognised chars=277
+```
+
+**那 277 字符是 FlowAI 自己的界面文字** —— 因为 App 被推到前台后，截到的就是 App 自己。
+
+### 缺陷一：回传结果时无条件启动 MainActivity
+
+`CaptureForPanelActivity.onFinished()` 原本总是 `startActivity(MainActivity)` 来"回传"。但**回传根本不需要 Activity** —— 面板就在同一进程。
+
+**修复**：优先直接调用 `FloatingAssistantService.deliverCapture()`；只有当服务已不存在（捕获期间被回收）时，才回落到启动 MainActivity，且那时它只用于重启服务。实测日志已变为 `delivered to live panel; not starting any activity`。
+
+### 缺陷二：框选窗口依赖主题，行为不确定
+
+`Theme.Translucent.NoTitleBar` 在部分 ROM 上带 `windowIsFloating`，会把窗口变成小的、不可聚焦的窗口。真机实测症状：Activity 报告 `Displayed`、甚至收到 `ACTION_DOWN`，但**画面上什么都不显示**。
+
+**修复**：不再依赖主题，在 `onCreate` 中显式 `setLayout(MATCH_PARENT, MATCH_PARENT)`、清除 `FLAG_NOT_FOCUSABLE`、设置背景与布局标志。顶部提示条改用 `ViewCompat.setOnApplyWindowInsetsListener` 避开状态栏（原先用反射取 `status_bar_height`，触发 lint 的 `InternalInsetResource` 与 `DiscouragedApi`）。
+
+### 需要更正的一条用户反馈
+
+用户随后澄清：**"界面卡住 / 完全不能操作"和"框选不能框选"都是看错了，框选没有问题。** 因此上面"缺陷二"并非用户实际遇到的问题，但它是**代码里真实存在的隐患**（依赖主题的窗口行为不可靠），保留修复。
+
+### 仍然存在的行为
+
+从**应用内**打开面板时，框选 Activity 与 `MainActivity` 同属一个任务，因此框选期间前台是 FlowAI 的任务（其上浮着半透明选择器，能看到下面的界面）。从**其他应用**点悬浮球打开面板时，来源应用应保持在下方 —— 这一条尚未在真机上确认。
+
 ## 已知边界
 
 - 依赖 `SYSTEM_ALERT_WINDOW`；每次重装 APK 该权限会被 HyperOS 清除。
