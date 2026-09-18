@@ -37,3 +37,6 @@ docs/verification/device/32-device-dialog2.png
 .gcb
 .gcc
 .gcd
+
+# 真机截图不入库：界面叠加会露出手机本身的真实内容（聊天、应用列表等）
+docs/verification/device/
