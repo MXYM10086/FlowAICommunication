@@ -14,3 +14,7 @@ local.properties
 .commitmsg*.tmp
 .git-commit-msg.tmp
 .gitmsg
+.gm
+
+# 含真实聊天界面的截图不入库（隐私）
+docs/verification/device/*wechat*.png

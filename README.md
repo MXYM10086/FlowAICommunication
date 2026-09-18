@@ -75,6 +75,11 @@ Kotlin + Jetpack Compose Android 产品逻辑 MVP，包名 `com.flowai.communica
 - **体积**：APK 约 **22 MB**（只发 arm64-v8a；捆绑 OCR 原生库每 ABI 要 7–12 MB，因此不打包其他 ABI）。
 - 已知限制：`FLAG_SECURE` 界面（网银、部分视频）会截出黑屏，不做绕过；小字有误识别；只识别当前屏，暂不做滚动拼接。
 
+### 已知的平台限制（实测）
+
+- **悬浮球在微信里不可见**：微信声明并获得了 `HIDE_OVERLAY_WINDOWS`，系统会隐藏其窗口上方的非系统覆盖窗口。因此**分享入口与划词入口是必需的**，不能只靠悬浮球。
+- **无障碍读不到微信**：实测微信不向无障碍框架暴露任何界面内容（同一探针读计算器有 160 个节点、读微信为零）。**无障碍路线已否决**，详见 [PoC 结论](docs/verification/A11Y_READABILITY_POC.md)。
+
 ## 架构
 
 `文本 → DialogueParser → Message[] → ContextCapsule → ConversationStateBuilder → ConversationState → NextActionEngine → Top-3 NextAction → ChatToActionEngine → ActionResult`

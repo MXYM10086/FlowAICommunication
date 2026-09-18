@@ -145,7 +145,7 @@ Just-in-Time Context 的架构前提：**用户触发才获取、完成后释放
 **三个必须预先设计对的坑：**
 
 1. **Android 12「不可信触摸」**：覆盖窗口必须"足够透明"，否则穿过它的触摸被系统拦截。对策：悬浮球窗口用 `WRAP_CONTENT` 只包球体、周围全透明（**已实现**）；大范围遮罩用 `FLAG_NOT_TOUCHABLE` + alpha 0。（精确透明度阈值未能取得官方原文，落地前必须核对）
-2. **Android 12 `HIDE_OVERLAY_WINDOWS`**：任何 App 声明该权限后，其窗口上方的非系统覆盖窗口会被隐藏。**模拟器实测：系统「设置」上方悬浮球确实被隐藏**（`mForceHideNonSystemOverlayWindow=true`）。**微信是否如此未验证** → "只靠悬浮窗做入口"是最大产品风险，分享与划词入口必须保留。
+2. **Android 12 `HIDE_OVERLAY_WINDOWS`**：任何 App 声明该权限后，其窗口上方的非系统覆盖窗口会被隐藏。**已验证：微信声明并获得了该权限**（见 [无障碍 PoC](verification/A11Y_READABILITY_POC.md)），因此**悬浮球在微信内不可见**。→ "只靠悬浮窗做入口"不可行，分享与划词入口是必需的。
 3. **国产 ROM**：小米/OPPO/vivo/华为另有"后台弹出界面/悬浮窗"开关与杀后台，屏译专门做了引导页。
 
 持 `SYSTEM_ALERT_WINDOW` 是"允许后台启动 Activity"的豁免条件之一（API 29+），对"点悬浮球直接拉起界面"很关键。
@@ -170,16 +170,15 @@ Android 14（本应用 targetSdk 34，直接受影响）三条硬要求：
 
 **真正的成本不在 OCR，而在 OCR 结果的"消息切分 / 去重 / 时间线重建"——这比识别本身难，是核心难点。**
 
-### 第 5 步：无障碍服务（可选，且需接受分发风险）
+### 第 5 步：无障碍服务（**已否决**）
 
-技术上更能直接读到界面文本（`canRetrieveWindowContent`、`FLAG_RETRIEVE_INTERACTIVE_WINDOWS = 64`），且 `AccessibilityService.takeScreenshot()` 自 **API 30** 可用、**不需要 MediaProjection 与授权弹窗**（需 `canTakeScreenshot="true"`）。
+**PoC 结论：不可行，已放弃这条路线。** 详见 [无障碍可读性 PoC](verification/A11Y_READABILITY_POC.md)。
 
-但两条硬约束：
+用真实 `AccessibilityService` 探针在真机上实测：**微信不向无障碍框架暴露任何界面内容** —— 同一服务读计算器得到 160 个节点 / 31 条文本，读微信则是零事件、空节点树（会话列表与聊天详情页皆然）。这与微信采用自绘/自有渲染体系一致。
 
-- **Google Play 基本不可行**：官方规定 Accessibility API 不是为自动化设计，只有"核心功能服务残障用户"才能标 `IsAccessibilityTool`，否则须论证"没有更窄的 API 能达到同样效果"。而"读取其他 App 聊天内容给自家 AI"这一需求本身几乎无法论证。有公开案例因该权限被拒 4 次、移除后 2 天过审；另需注意**声明粘性**——任一 track 还有带该权限的活跃版本，声明就删不掉、拒审持续。Android 13+ 侧载 App 默认处于 Restricted settings，用户须手动允许才能启用无障碍
-- **可读性未知**：微信/QQ 当前版本能否读到消息文本**没有任何实测数据**，是最大单点不确定性。列表只渲染可视区，需模拟滚动 + 去重才能拼出整段对话
+除技术不可行外，该权限在 Google Play 上亦属高危（需论证"没有更窄的 API 能达到同样效果"，而"读取其他 App 内容"这一需求本身几乎无法论证）。**因此不投入。**
 
-**先做 PoC 验证可读性，再决定是否投入。** 若做：`packageNames` 白名单 + 显式开关 + 用完 `disableSelf()`。
+**同一轮 PoC 还验证了一个关键风险**：微信声明并获得了 `HIDE_OVERLAY_WINDOWS`，因此**悬浮球在微信内不可见**。这使"分享入口 + 划词入口"从"可选补充"变成**必需**，并进一步确立了**截屏 + 区域 OCR 是唯一可行的"读取屏幕对话"路径**。
 
 ### 第 6 步：自定义输入法（最后，且建议 fork）
 
