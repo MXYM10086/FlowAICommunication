@@ -7,4 +7,11 @@
         <item name="android:windowActionModeOverlay">true</item>
     </style>
     <style name="Theme.FlowAI" parent="Theme.FlowAI.Base" />
+    <!-- Translucent so the app underneath stays visible while the user frames the region. -->
+    <style name="Theme.FlowAI.RegionPicker" parent="android:style/Theme.Translucent.NoTitleBar">
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+    </style>
 </resources>

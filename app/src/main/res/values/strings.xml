@@ -14,4 +14,9 @@
     <string name="capture_channel_desc">正在截取屏幕以识别聊天内容</string>
     <string name="capture_notification_title">正在识别屏幕内容</string>
     <string name="capture_notification_text">仅在本次识别期间截屏；识别完成后立即释放</string>
+    <!-- Region picker: frame the conversation before capture. -->
+    <string name="region_hint">拖动框选聊天区域；只识别框内内容</string>
+    <string name="region_confirm">识别框选区域</string>
+    <string name="region_full_screen">整屏识别</string>
+    <string name="region_cancel">取消</string>
 </resources>

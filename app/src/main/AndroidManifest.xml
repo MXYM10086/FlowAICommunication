@@ -92,5 +92,15 @@
             android:name=".system.ScreenCaptureService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
+        <!--
+          Region picker. Theme.NoDisplay is wrong here (it must stay visible to pick from), but it
+          is translucent so the app underneath is not destroyed, and excluded from recents.
+        -->
+        <activity
+            android:name=".system.RegionPickerActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.FlowAI.RegionPicker" />
     </application>
 </manifest>

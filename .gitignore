@@ -13,3 +13,4 @@ local.properties
 # 临时提交信息文件
 .commitmsg*.tmp
 .git-commit-msg.tmp
+.gitmsg

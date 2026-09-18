@@ -70,24 +70,30 @@ Just-in-Time Context 的架构前提：**用户触发才获取、完成后释放
 
 **OCR 选型：ML Kit 捆绑版中文模型**（`com.google.mlkit:text-recognition-chinese`）。依赖树里出现 `text-recognition-bundled-common`，确认拿到的是**捆绑版**：模型打进 APK、完全离线、**不依赖 Google Play services**。unbundled 版靠 GMS 动态下载、下载完成前返回空结果，在无 GMS 机型上会表现为"识别不到"——对截屏功能是错误的失败模式。
 
-⚠️ **代价：APK 从 7.64 MB 涨到 50.7 MB**，因为四个 ABI 各带一份 `libmlkit_google_ocr_pipeline.so`（7–12 MB/架构）。**待决策**：用 ABI split / App Bundle 只发 arm64 可显著缩小，但这会牺牲 x86 模拟器调试便利。
+**APK 体积：已从 50.66 MB 降到 22.06 MB。** 做法是在 `defaultConfig.ndk` 里只保留 `arm64-v8a` —— 捆绑的 OCR 原生库每个 ABI 要 7–12 MB，四个 ABI 就是 40 多 MB。代价是放弃 armeabi-v7a / x86 设备；测试模拟器带 ARM 转译（`ro.enable.native.bridge.exec=1`），因此仍可调试。同时按目标平台关掉了 `ChromeOsAbiSupport` 这条 lint 提示（不为 ChromeOS 增加 x86_64）。
 
-**实测结论（模拟器，Android 14）**：
+**区域选择（已实现）**：`system/RegionPickerActivity` —— 全屏半透明选择面，拖拽框选，框内保持原亮度、框外压暗，让用户看清将识别哪一块。返回绝对屏幕坐标的 `CaptureRegion`，在 `MediaProjectionScreenshotter.crop()` 里裁剪后才交给 OCR。**这不只是便利功能**：只读聊天区意味着更少的无关内容被识别，正是 Just-in-Time Context 的要求，同时也提升 OCR 准确率（排除状态栏与应用外壳）。
 
-| 项 | 结果 |
-| --- | --- |
-| 系统授权弹窗 | ✅ `MediaProjectionPermissionActivity` 正常弹出（Cancel / Start now） |
-| 前台服务类型 | ✅ `isForeground=true types=00000020`（mediaProjection） |
-| 虚拟显示建立 | ✅ `capture ready: 1080x2209 @ 420 dpi` |
-| 尺寸变化回调 | ✅ `captured content resized to 1080x2400` |
-| **端到端 OCR** | ✅ **`screen capture recognised chars=278`**，中文文本正确进入输入框，来源显示"内容来自截屏识别" |
-| 资源释放 | ✅ `projection stopped` → `capture released` → `capture session released` |
+**实测结论**：
 
-**踩到并修掉的两个顺序问题**：
-1. **授权弹窗会把宿主 Activity 推到后台**。最初把抓取放在 `LaunchedEffect` 里，且等待窗口只有 5 秒 —— 比用户读弹窗的时间还短，于是授权后没人去抓帧。现改为**由 Activity 自己的 CoroutineScope 持有抓取协程**，并把等待上限放宽到 30 秒。
-2. Android 14 要求 `startForeground(mediaProjection)` **早于** `getMediaProjection()`；`registerCallback` 必须**早于** `createVirtualDisplay()`，否则抛异常。两者均已按序实现。
+| 项 | 模拟器 (Android 14) | 真机 (Android 16 / HyperOS) |
+| --- | --- | --- |
+| 系统授权弹窗 | ✅ `MediaProjectionPermissionActivity` | ✅ **两步弹窗**（含"应用范围"选择器） |
+| 前台服务类型 | ✅ `isForeground=true types=00000020` | ✅ |
+| 虚拟显示建立 | ✅ 1080x2209 @ 420 dpi | ✅ 1440x3006 @ 560 dpi |
+| 尺寸变化回调 | ✅ resized to 1080x2400 | ✅ resized to 1440x3200 |
+| **端到端 OCR（全屏）** | ✅ **282 字符** | ✅ **82 字符** |
+| **区域框选** | ✅ `capture region: CaptureRegion(left=200, top=700, right=900, bottom=1500)` | 待测 |
+| **区域裁剪生效** | ✅ 同一屏全屏 282 字符 → 框选后 **83 字符**，且内容确认只在框内 | 待测 |
+| 资源释放 | ✅ `projection stopped` → `capture released` | ✅ |
+| 瘦身版体积 | ✅ 22.06 MB / `primaryCpuAbi=arm64-v8a` | ✅ 同包安装运行正常 |
 
-**已知限制**：全屏捕获，尚未做区域选择 UI；`FLAG_SECURE` 界面（网银、部分视频）截出黑屏，不做绕过；OCR 对小字有误识别（实测"权限"→"衩限"、"屏幕"→"屏慕"），后续可用区域裁剪 + 放大改善。
+**踩到并修掉的顺序/时序问题**：
+1. **授权弹窗会把宿主 Activity 推到后台**。最初把抓取放在 `LaunchedEffect` 里且只等 5 秒 —— 比用户读弹窗的时间还短，于是授权后没人去抓帧。现改为**由 Activity 自己的 CoroutineScope 持有抓取协程**，并把等待上限放宽到 30 秒。
+2. Android 14 要求 `startForeground(mediaProjection)` **早于** `getMediaProjection()`；`registerCallback` 必须**早于** `createVirtualDisplay()`。两者均已按序实现。
+3. **HyperOS 的授权弹窗是两步的、且 uiautomator 抓不到**。自动化真机测试时无法可靠点击；该弹窗需要人工确认。
+
+**已知限制**：`FLAG_SECURE` 界面（网银、部分视频）截出黑屏，不做绕过；OCR 对小字有误识别（实测"权限"→"权阴"）；尚未做多帧/滚动拼接，因此只识别当前屏内容。
 
 ### 1. `ACTION_PROCESS_TEXT`（划词入口，已实现）
 
@@ -146,9 +152,11 @@ Just-in-Time Context 的架构前提：**用户触发才获取、完成后释放
 
 **它只解决"入口常驻"，单独无法解决"读到对话"。**
 
-### 第 4 步：MediaProjection + 区域 OCR（链路已实现，区域选择待做）
+### 第 4 步：MediaProjection + 区域 OCR（已实现）
 
-**这一步才真正解决"接收整段聊天文本"，且不触碰 Play 高危权限。** 截屏与 OCR 链路已跑通（见上方 0c）；剩余的是**区域选择 UI** 与识别质量优化。
+**这一步才真正解决"接收整段聊天文本"，且不触碰 Play 高危权限。** 截屏、区域选择与端侧 OCR 均已跑通（见上方 0c），模拟器与真机都验证过。
+
+后续可继续的优化：多帧/滚动拼接以读取整段对话；按区域放大改善小字识别率。
 
 Android 14（本应用 targetSdk 34，直接受影响）三条硬要求：
 

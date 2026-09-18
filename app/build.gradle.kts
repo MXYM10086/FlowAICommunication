@@ -6,8 +6,20 @@ android {
         applicationId = "com.flowai.communication"
         minSdk = 26
         targetSdk = 34
-        versionCode = 8
-        versionName = "0.3.0"
+        versionCode = 9
+        versionName = "0.4.0"
+
+        ndk {
+            // The bundled ML Kit OCR pipeline ships a 7-12 MB native library PER ABI; shipping all
+            // four made the APK 50.7 MB. arm64-v8a covers every real device this targets, and the
+            // test emulator runs it through ARM translation (ro.enable.native.bridge.exec=1).
+            abiFilters += listOf("arm64-v8a")
+        }
+    }
+    lint {
+        // ChromeOS is not a target platform; shipping x86_64 purely to satisfy this would re-add
+        // ~12 MB of native OCR library for no user.
+        disable += "ChromeOsAbiSupport"
     }
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
@@ -26,9 +38,9 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.2")
 
     // On-device Chinese OCR for screenshot capture (V2). The BUNDLED model is deliberate:
-    // it ships inside the APK (about +4 MB per ABI), runs fully offline, and does NOT depend on
-    // Google Play services — the unbundled variant downloads its model via GMS and returns empty
-    // results until that finishes, which is unusable on devices without GMS.
+    // it ships inside the APK, runs fully offline, and does NOT depend on Google Play services —
+    // the unbundled variant downloads its model via GMS and returns empty results until that
+    // finishes, which is unusable on devices without GMS.
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
     implementation("com.google.mlkit:text-recognition:16.0.1")
 

@@ -32,8 +32,10 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.flowai.communication.data.model.SourceType
+import com.flowai.communication.domain.CaptureRegion
 import com.flowai.communication.domain.PrefsConsumedShareStore
 import com.flowai.communication.domain.SharedText
+import com.flowai.communication.system.RegionPickerActivity
 import com.flowai.communication.system.ScreenCaptureService
 import com.flowai.communication.ui.*
 import com.flowai.communication.ui.home.*
@@ -69,8 +71,42 @@ class MainActivity : ComponentActivity() {
     /** The live ViewModel, so the capture coroutine can deliver results. */
     private var activeVm: FlowViewModel? = null
 
+    /** Region chosen in the picker, or null for the whole screen. */
+    private var pendingRegion: CaptureRegion? = null
+
     /** Owns the capture coroutine; the Activity outlives the consent dialog. */
     private val captureScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /**
+     * Region picker. Returns the framed conversation area, which both improves OCR accuracy and
+     * keeps unrelated screen content out of the pipeline.
+     */
+    private val regionPicker = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        pendingRegion = if (result.resultCode == RESULT_OK) {
+            @Suppress("DEPRECATION")
+            result.data?.getParcelableExtra(RegionPickerActivity.EXTRA_REGION)
+        } else {
+            // Cancelled, or the user chose full screen (which also returns CANCELED + no region).
+            null
+        }
+        val chosen = pendingRegion
+        Log.i(TAG, if (chosen == null) "capture region: full screen" else "capture region: $chosen")
+        askForCaptureConsent()
+    }
+
+    /** Asks for capture consent; the result callback then runs [runCapture]. */
+    private fun requestScreenCapture() {
+        if (captureInProgress) return
+        captureInProgress = true
+        regionPicker.launch(RegionPickerActivity.intent(this))
+    }
+
+    private fun askForCaptureConsent() {
+        val manager = getSystemService(MediaProjectionManager::class.java)
+        projectionConsent.launch(manager.createScreenCaptureIntent())
+    }
 
     /**
      * MediaProjection consent. Android 14 requires consent for EVERY capture session, so this
@@ -86,7 +122,7 @@ class MainActivity : ComponentActivity() {
             captureInProgress = false
             return@registerForActivityResult
         }
-        val started = ScreenCaptureService.start(applicationContext, result.resultCode, data)
+        val started = ScreenCaptureService.start(applicationContext, result.resultCode, data, pendingRegion)
         Log.i(TAG, "screen capture session start requested: started=$started")
         if (!started) {
             activeVm?.reportCaptureUnavailable("无法启动截屏服务")
@@ -94,14 +130,6 @@ class MainActivity : ComponentActivity() {
         } else {
             runCapture()
         }
-    }
-
-    /** Asks for consent; the result callback then runs [runCapture]. */
-    private fun requestScreenCapture() {
-        if (captureInProgress) return
-        captureInProgress = true
-        val manager = getSystemService(MediaProjectionManager::class.java)
-        projectionConsent.launch(manager.createScreenCaptureIntent())
     }
 
     /**
