@@ -56,6 +56,11 @@ class FloatingAssistantService : Service() {
             openPanelOnStart = false
             togglePanel()
         }
+        // Text handed over before the service existed (selection toolbar opened it).
+        pendingText?.let { text ->
+            pendingText = null
+            showPanelWithText(text)
+        }
     }
 
     /**
@@ -160,7 +165,19 @@ class FloatingAssistantService : Service() {
     /** Called when a capture started from the panel returns. */
     fun deliverCapture(text: String?, failure: String?) {
         Log.i(TAG, "deliverCapture: chars=${text?.length ?: 0} panelOpen=${panel != null}")
-        val current = panel ?: AssistantPanelWindow(
+        val current = panel ?: newPanel()
+        current.deliverCapture(text, failure)
+    }
+
+    /** Shows the panel already holding [text]; used by the selection toolbar. */
+    fun showPanelWithText(text: String) {
+        Log.i(TAG, "showPanelWithText: chars=${text.length}")
+        val current = panel ?: newPanel()
+        current.showWithText(text)
+    }
+
+    private fun newPanel(): AssistantPanelWindow =
+        AssistantPanelWindow(
             context = this,
             onClose = { panel = null },
             onStartCapture = {
@@ -169,8 +186,6 @@ class FloatingAssistantService : Service() {
                 }.onFailure { Log.w(TAG, "could not start panel capture", it) }
             }
         ).also { panel = it }
-        current.deliverCapture(text, failure)
-    }
 
     /** Escape hatch kept for the panel's "open full app" action. */
     private fun bringAppForward() {
@@ -235,6 +250,10 @@ class FloatingAssistantService : Service() {
         @Volatile
         private var openPanelOnStart: Boolean = false
 
+        /** Text to show once the service is up; set by the selection entry point. */
+        @Volatile
+        private var pendingText: String? = null
+
         /**
          * Opens the assistant panel without the user having to tap the bubble.
          *
@@ -257,6 +276,23 @@ class FloatingAssistantService : Service() {
             val current = instance ?: return false
             current.deliverCapture(text, failure)
             return true
+        }
+
+        /**
+         * Shows the panel holding [text] — the selection-toolbar entry point.
+         *
+         * Returns false when the overlay permission is missing, so the caller can fall back to the
+         * full app instead of dropping the user's selection.
+         */
+        fun showPanelWithText(context: Context, text: String): Boolean {
+            if (!OverlayPermission.isGranted(context)) return false
+            val current = instance
+            if (current != null) {
+                current.showPanelWithText(text)
+                return true
+            }
+            pendingText = text
+            return start(context)
         }
 
         /** Starts the bubble. No-op (returns false) when the overlay permission is missing. */

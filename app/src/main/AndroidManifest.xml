@@ -18,7 +18,12 @@
         android:icon="@mipmap/ic_launcher" android:dataExtractionRules="@xml/data_extraction_rules"
         tools:targetApi="31" android:label="FlowAI Communication"
         android:theme="@style/Theme.FlowAI" android:supportsRtl="true">
-        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask">
+        <!--
+          No singleTask: with it, the selection entry point gets merged into this task and drags the
+          whole app to the front, so the panel would appear over FlowAI instead of over the app the
+          user was reading. Shared text arrives through onCreate/onNewIntent either way.
+        -->
+        <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -59,11 +64,21 @@
                 <data />
             </intent-filter>
             <!--
-              Selection-toolbar entry (Android 6.0+): the user selects text in ANY app — including
-              chat apps that never expose a share action for it — and picks FlowAI right from the
-              floating selection toolbar. Closer to the "understand this conversation" intent than
-              sharing a single message, and it needs no extra permission.
+              Selection-toolbar entry (Android 6.0+). Declared on SelectionEntryActivity rather than
+              here so the selection opens the in-place panel over the app the user is reading,
+              instead of pulling the whole app to the front.
             -->
+        </activity>
+        <!--
+          Selection-toolbar entry point. Translucent and UI-less: it forwards the selected text to
+          the floating panel and finishes, so the user stays in the app they were reading.
+        -->
+        <activity
+            android:name=".system.SelectionEntryActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@style/Theme.FlowAI.RegionPicker">
             <intent-filter android:label="@string/process_text_label">
                 <action android:name="android.intent.action.PROCESS_TEXT" />
                 <category android:name="android.intent.category.DEFAULT" />

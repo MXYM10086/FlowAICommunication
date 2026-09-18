@@ -150,6 +150,24 @@ class AssistantPanelWindow(
         Log.i(TAG, "assistant panel resumed (rebuilt)")
     }
 
+    /**
+     * Puts [text] into the input box, showing the panel if needed.
+     *
+     * Used by the selection toolbar: the user picked text elsewhere and expects the panel to come
+     * up already holding it, not to be asked to paste.
+     */
+    fun showWithText(text: String) {
+        panelState.input = text.take(MAX_INPUT_CHARS)
+        panelState.result = null
+        panelState.chosen = null
+        panelState.executed = null
+        panelState.error = null
+        panelState.copied = null
+        if (view == null) {
+            if (suspended) resumePanel() else show()
+        }
+    }
+
     fun show(initialText: String? = null) {
         if (view != null) return
         val seed = initialText ?: pendingInitialText
@@ -295,6 +313,9 @@ class AssistantPanelWindow(
          * long analyses room to breathe instead of a fixed dp cap tuned to one device.
          */
         const val DEFAULT_MAX_HEIGHT_FRACTION = 0.68f
+
+        /** Matches the cap the app and the repository enforce on pasted chat text. */
+        const val MAX_INPUT_CHARS = 20_000
     }
 }
 
