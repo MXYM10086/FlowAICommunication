@@ -13,7 +13,7 @@
 | --- | --- |
 | 模拟器 | Android Emulator（`emulator` 包，独立安装于 `.tools/android-sdk/emulator`） |
 | 硬件加速 | **WHPX**，`emulator -accel-check` 返回 `WHPX(10.0.26200) is installed and usable` |
-| AVD | `flowai34`，设备档案 `pixel_6`，位于 `C:\Users\hp\.android\avd\flowai34.avd` |
+| AVD | `flowai34`，设备档案 `pixel_6`，位于用户主目录下的 `.android/avd/flowai34.avd` |
 | 系统镜像 | `system-images;android-34;google_apis;x86_64`（rev 14） |
 | 镜像校验 | SHA1 `e0f6c9a0691aa27bd597d0deb1bcfdc943ac8ca7`，大小 1,563,721,130 字节，**与官方 manifest 一致** |
 | 运行时 | Android 14（API 34），x86_64，1080x2400 @ 420dpi |
@@ -185,7 +185,8 @@ Demo A 消息顺序和说话人、中文 / 英文冒号、多说话人、时间 
 SDK 已就绪于 `.tools/android-sdk`（`local.properties` 已指向），AVD 已创建，无需重复下载。
 
 ```powershell
-$sdk = "E:\FlowAICommunication\.tools\android-sdk"
+# 在仓库根目录执行；路径按需替换为你的实际位置
+$sdk = "$PWD\.tools\android-sdk"
 $adb = "$sdk\platform-tools\adb.exe"
 $env:ANDROID_HOME = $sdk; $env:ANDROID_SDK_ROOT = $sdk
 
@@ -194,8 +195,8 @@ $env:ANDROID_HOME = $sdk; $env:ANDROID_SDK_ROOT = $sdk
 
 # 等待启动完成后安装并运行
 & $adb wait-for-device
-& $adb install -r "E:\FlowAICommunication\FlowAICommunication-debug.apk"
+& $adb install -r ".\FlowAICommunication-debug.apk"
 & $adb shell am start -n com.flowai.communication/.MainActivity
 ```
 
-模拟器占用磁盘约 5.3 GB（系统镜像 4.16 GB + emulator 1.01 GB + cmdline-tools 0.17 GB），均位于项目内 `.tools/android-sdk`（AVD 数据位于 `C:\Users\hp\.android\avd`）。
+模拟器占用磁盘约 5.3 GB（系统镜像 4.16 GB + emulator 1.01 GB + cmdline-tools 0.17 GB），均位于项目内 `.tools/android-sdk`（AVD 数据位于用户主目录下的 `.android/avd`）。
