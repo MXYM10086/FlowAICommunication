@@ -1,6 +1,6 @@
 # 无障碍可读性 PoC 结论
 
-日期：2026-09-19。设备：Redmi 23113RKC6C（vermeer），Android 16 / SDK 36，HyperOS V816。
+日期：2026-09-19。验证设备：一台 Redmi 机型，Android 16 / SDK 36，HyperOS。
 目标：回答"能否用 AccessibilityService 读取微信聊天内容"——这决定 V2 的无障碍路线是否值得投入。
 
 ## 结论

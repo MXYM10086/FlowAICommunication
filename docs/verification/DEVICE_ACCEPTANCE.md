@@ -1,6 +1,6 @@
 # 真机验收记录
 
-验收日期：2026-09-19。设备：Redmi 23113RKC6C（vermeer），**Android 16 / SDK 36**，HyperOS V816，arm64-v8a，1440x3200 @ 560dpi（带挖孔：顶部 138px）。
+验收日期：2026-09-19。验证设备：一台 Redmi 机型，**Android 16 / SDK 36**，HyperOS，arm64-v8a，1440x3200 @ 560dpi（带挖孔：顶部 138px）。
 被测版本：`com.flowai.communication` **0.1.5**（versionCode 6）。
 方式：`adb` 驱动真机，逐条操作并抓取界面层级与截图（`docs/verification/device/`）。
 
@@ -84,10 +84,10 @@ extras    = [sourcePackageName, android.intent.extra.SUBJECT,
 ## 复现方式
 
 ```powershell
-$adb = "E:\FlowAICommunication\.tools\android-sdk\platform-tools\adb.exe"
-$d = "89c2b76"   # adb devices 中你的设备序列号
+$adb = "$PWD\.tools\android-sdk\platform-tools\adb.exe"
+$d = "<设备序列号>"   # 从 `adb devices` 获取
 
-& $adb -s $d install -r "E:\FlowAICommunication\FlowAICommunication-0.1.5-debug.apk"
+& $adb -s $d install -r ".\FlowAICommunication-debug.apk"
 & $adb -s $d shell am start -n com.flowai.communication/.MainActivity
 
 # 抓取 FlowAI 诊断日志（分享/划词入口的收到与拒绝原因）

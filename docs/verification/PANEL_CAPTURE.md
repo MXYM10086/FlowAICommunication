@@ -69,7 +69,7 @@ assistant panel resumed (rebuilt)                    ← 视图重建
 点「收起」后覆盖窗口数: 1                             ← 触摸已恢复
 ```
 
-**真机（Redmi 23113RKC6C / Android 16 / HyperOS）**
+**真机（一台 Redmi 机型 / Android 16 / HyperOS）**
 
 用户人工确认 0.8.1 全部通过：截屏后面板按键正常、分析可触发。
 
