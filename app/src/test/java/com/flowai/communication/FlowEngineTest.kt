@@ -1,6 +1,8 @@
 package com.flowai.communication
 import org.junit.Assert.*
 import org.junit.Test
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runTest
 import com.flowai.communication.ai.MockLlmService
 import com.flowai.communication.data.model.*
 import com.flowai.communication.data.repository.*
@@ -27,9 +29,13 @@ class FlowEngineTest {
         assertEquals("15:00 开会", messages.first().text)
     }
     @Test fun skipsBlankMessages() { assertTrue(parser.parse("  \n我：  \r\n").isEmpty()) }
-    @Test(expected = IllegalArgumentException::class) fun rejectsEmptyInput() { repo().analyze(" ") }
-    @Test(expected = IllegalArgumentException::class) fun rejectsOversizeInput() { repo().analyze("字".repeat(20_001)) }
-    @Test fun demoAHasExpectedStateAndTopThree() {
+    @Test fun rejectsEmptyInput() = runTest {
+        assertThrows(IllegalArgumentException::class.java) { runBlocking { repo().analyze(" ") } }
+    }
+    @Test fun rejectsOversizeInput() = runTest {
+        assertThrows(IllegalArgumentException::class.java) { runBlocking { repo().analyze("字".repeat(20_001)) } }
+    }
+    @Test fun demoAHasExpectedStateAndTopThree() = runTest {
         val result = repo().analyze(DemoConversations.A)
         assertEquals("任务完成进度", result.state.topic)
         assertTrue(result.state.unresolvedIssues.contains("尚未明确具体完成时间"))
@@ -37,18 +43,19 @@ class FlowEngineTest {
         assertEquals(listOf(1, 2, 3), result.actions.map { it.priority })
         assertTrue(result.state.agreements.isEmpty())
     }
-    @Test fun demoAProducesThreeReplyStyles() {
+    @Test fun demoAProducesThreeReplyStyles() = runTest {
         val repository = repo(); val result = repository.analyze(DemoConversations.A)
         val output = repository.execute(result, result.actions.first())
         assertEquals(listOf("自然", "简洁", "正式"), output.replies.map { it.style })
         assertTrue(output.replies.all { "今晚十点" in it.text })
         assertTrue(output.objects.isEmpty())
     }
-    @Test fun eachDemoAActionProducesDifferentReplies() {
+    @Test fun eachDemoAActionProducesDifferentReplies() = runTest {
         val repository = repo(); val result = repository.analyze(DemoConversations.A)
-        assertEquals(3, result.actions.map { repository.execute(result, it).replies }.distinct().size)
+        val distinct = result.actions.map { repository.execute(result, it).replies }.distinct()
+        assertEquals(3, distinct.size)
     }
-    @Test fun demoBProducesOneEventAndTwoTasks() {
+    @Test fun demoBProducesOneEventAndTwoTasks() = runTest {
         val repository = repo(); val result = repository.analyze(DemoConversations.B)
         val output = repository.execute(result, result.actions.first())
         val event = output.objects.filterIsInstance<ActionObject.Event>().single()
@@ -59,22 +66,22 @@ class FlowEngineTest {
         assertTrue(tasks.all { it.deadline == "今晚 22:00" })
         assertEquals(3, output.objects.size)
     }
-    @Test fun eventActionOnlyProducesEvent() {
+    @Test fun eventActionOnlyProducesEvent() = runTest {
         val repository = repo(); val result = repository.analyze(DemoConversations.B)
         val output = repository.execute(result, result.actions[1])
         assertEquals(1, output.objects.size); assertTrue(output.objects.single() is ActionObject.Event)
     }
-    @Test fun arbitraryTextDoesNotInventDemoFacts() {
+    @Test fun arbitraryTextDoesNotInventDemoFacts() = runTest {
         val repository = repo(); val result = repository.analyze("我：下周讨论旅行吧")
         assertEquals(ConversationStage.UNKNOWN, result.state.stage)
         assertTrue(repository.execute(result, result.actions.last()).objects.isEmpty())
         assertFalse(result.state.keyFacts.any { "A203" in it })
     }
-    @Test fun alteredDemoDoesNotReturnStaleTime() {
+    @Test fun alteredDemoDoesNotReturnStaleTime() = runTest {
         val result = repo().analyze(DemoConversations.B.replace("三点", "四点"))
         assertEquals(ConversationStage.UNKNOWN, result.state.stage)
     }
-    @Test fun analysesAreIndependentWithoutRecentHistory() {
+    @Test fun analysesAreIndependentWithoutRecentHistory() = runTest {
         val repository = repo()
         val first = repository.analyze(DemoConversations.A)
         val second = repository.analyze(DemoConversations.B)
@@ -95,11 +102,13 @@ class FlowEngineTest {
         assertNull(StubScreenCaptureProvider().capture())
         assertFalse(StubShareReceiver().receive("text"))
     }
-    @Test(expected = IllegalArgumentException::class) fun rejectsForeignAction() {
+    @Test fun rejectsForeignAction() = runTest {
         val repository = repo(); val result = repository.analyze(DemoConversations.A)
-        repository.execute(result, result.actions.first().copy(id = "foreign"))
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking { repository.execute(result, result.actions.first().copy(id = "foreign")) }
+        }
     }
-    @Test fun shareSourceIsPreservedInCapsule() {
+    @Test fun shareSourceIsPreservedInCapsule() = runTest {
         val result = repo().analyze(DemoConversations.A, SourceType.SHARE)
         assertEquals(SourceType.SHARE, result.capsule.sourceType)
     }

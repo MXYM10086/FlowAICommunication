@@ -6,8 +6,8 @@ android {
         applicationId = "com.flowai.communication"
         minSdk = 26
         targetSdk = 34
-        versionCode = 21
-        versionName = "0.9.0"
+        versionCode = 22
+        versionName = "1.0.0"
 
         ndk {
             // The bundled ML Kit OCR pipeline ships a 7-12 MB native library PER ABI; shipping all
@@ -28,6 +28,13 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     kotlinOptions { jvmTarget = "17" }
+    testOptions {
+        unitTests {
+            // Remote engine tests reach real code paths that log. Without this, android.util.Log is
+            // an unmocked stub and the test fails on the logging rather than on the logic.
+            isReturnDefaultValues = true
+        }
+    }
 }
 dependencies {
     implementation(platform("androidx.compose:compose-bom:2024.06.00"))
@@ -45,4 +52,9 @@ dependencies {
     implementation("com.google.mlkit:text-recognition:16.0.1")
 
     testImplementation("junit:junit:4.13.2")
+    // Engine calls are suspending so a network-backed implementation can satisfy the same seam.
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
+    // The platform's org.json is a stub in JVM tests; this gives the real parser so the remote
+    // engine's request building and response parsing are genuinely exercised.
+    testImplementation("org.json:json:20240303")
 }

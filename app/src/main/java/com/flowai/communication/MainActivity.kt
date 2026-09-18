@@ -202,7 +202,10 @@ class MainActivity : ComponentActivity() {
         // process-surviving "already consumed" store. Without it, an intent re-delivered after
         // process death would silently re-import chat text the user had already ended the
         // session on.
-        val factory = viewModelFactory { initializer { FlowViewModel(PrefsConsumedShareStore(applicationContext)) } }
+        val factory = viewModelFactory { initializer { FlowViewModel(
+            consumedShares = PrefsConsumedShareStore(applicationContext),
+            engineFactory = com.flowai.communication.ai.EngineSettingsStore.engineFactory(applicationContext)
+        ) } }
         setContent {
             // Text fields and LazyColumn children can save state internally too.
             CompositionLocalProvider(LocalSaveableStateRegistry provides null) {
@@ -366,7 +369,8 @@ class MainActivity : ComponentActivity() {
                     clearedNotice = vm.clearedNotice,
                     captureNotice = vm.captureNotice,
                     captureInProgress = captureInProgress,
-                    onRequestCapture = onRequestCapture
+                    onRequestCapture = onRequestCapture,
+                    onOpenSettings = vm::openSettings
                 )
                 Page.INPUT -> InputScreen(
                     vm.input, vm.error, vm::edit, vm::analyze, vm.sourceType,
@@ -377,6 +381,7 @@ class MainActivity : ComponentActivity() {
                 Page.ACTION -> vm.output?.let { output -> vm.selected?.let { action ->
                     ActionScreen(action, output, vm::editReply)
                 } }
+                Page.SETTINGS -> com.flowai.communication.ui.settings.EngineSettingsScreen(vm::back)
             }
         }
     }

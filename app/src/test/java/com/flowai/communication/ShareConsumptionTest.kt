@@ -1,4 +1,4 @@
-package com.flowai.communication
+﻿package com.flowai.communication
 
 import com.flowai.communication.data.model.SourceType
 import com.flowai.communication.data.repository.DemoConversations
@@ -8,6 +8,7 @@ import com.flowai.communication.ui.FlowViewModel
 import com.flowai.communication.ui.Page
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Rule
 
 /**
  * Covers the fix for: after process death, Android re-delivers the original SEND intent from the
@@ -15,6 +16,9 @@ import org.junit.Test
  * A fresh ViewModel with a surviving store stands in for a recreated process.
  */
 class ShareConsumptionTest {
+    @get:Rule
+    val mainDispatcher = MainDispatcherRule()
+
 
     @Test fun reDeliveredShareDoesNotReopenInputInANewProcess() {
         val store = InMemoryConsumedShareStore()

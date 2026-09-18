@@ -2,29 +2,68 @@ package com.flowai.communication.ui
 
 import androidx.compose.runtime.*
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
+import com.flowai.communication.ai.LlmService
 import com.flowai.communication.ai.MockLlmService
 import com.flowai.communication.data.model.*
 import com.flowai.communication.data.repository.ConversationRepository
 import com.flowai.communication.domain.CaptureEndReason
 import com.flowai.communication.domain.CaptureSession
 import com.flowai.communication.domain.CaptureState
+import com.flowai.communication.domain.ChatToActionEngine
 import com.flowai.communication.domain.ConsumedShareStore
+import com.flowai.communication.domain.ConversationStateBuilder
 import com.flowai.communication.domain.InMemoryConsumedShareStore
+import com.flowai.communication.domain.NextActionEngine
 import com.flowai.communication.domain.PlainTextDialogueParser
 
-enum class Page { HOME, INPUT, ANALYSIS, ACTION }
+enum class Page { HOME, INPUT, ANALYSIS, ACTION, SETTINGS }
 
 /** Entry points where another app handed us the text, as opposed to the user typing it. */
 private val EXTERNAL_SOURCES = setOf(SourceType.SHARE, SourceType.PROCESS_TEXT, SourceType.SCREENSHOT)
+
+/**
+ * Presents one engine through all three engine interfaces, resolving it on every call.
+ *
+ * Resolving per call is what lets the user switch between the local engine and a configured relay
+ * without rebuilding the ViewModel: the next analysis simply uses the new engine.
+ */
+private class SuspendingEngine(private val factory: () -> LlmService) :
+    ConversationStateBuilder, NextActionEngine, ChatToActionEngine {
+
+    override suspend fun build(context: ContextCapsule): ConversationState = factory().build(context)
+
+    override suspend fun recommend(state: ConversationState): List<NextAction> =
+        factory().recommend(state)
+
+    override suspend fun execute(
+        context: ContextCapsule,
+        state: ConversationState,
+        action: NextAction
+    ): ActionResult = factory().execute(context, state, action)
+}
 
 /** Sensitive state belongs to this in-memory session, never SavedStateHandle. */
 class FlowViewModel(
     private val consumedShares: ConsumedShareStore = InMemoryConsumedShareStore(),
     /** Owns the Just-in-Time context lifecycle. Platform resources release in response to it. */
-    val capture: CaptureSession = CaptureSession()
+    val capture: CaptureSession = CaptureSession(),
+    /**
+     * Chooses the engine for each call.
+     *
+     * Defaults to the local one so tests and unconfigured installs never touch the network; the app
+     * passes a factory that returns the relay-backed engine once an endpoint is configured.
+     */
+    private val engineFactory: () -> LlmService = { MockLlmService() }
 ) : ViewModel() {
-    private val mock = MockLlmService()
-    private val repository = ConversationRepository(PlainTextDialogueParser(), mock, mock, mock)
+    private val repository = ConversationRepository(
+        PlainTextDialogueParser(),
+        SuspendingEngine(engineFactory),
+        SuspendingEngine(engineFactory),
+        SuspendingEngine(engineFactory)
+    )
     var page by mutableStateOf(Page.HOME); private set
     var input by mutableStateOf(""); private set
     var analysis by mutableStateOf<AnalysisResult?>(null); private set
@@ -34,12 +73,19 @@ class FlowViewModel(
     var clearedNotice by mutableStateOf<String?>(null); private set
     var sourceType by mutableStateOf(SourceType.TEXT); private set
 
+    /**
+     * True while an engine call is in flight.
+     *
+     * The engines may reach a network service, so the UI needs something to show between the tap
+     * and the result.
+     */
+    var busy by mutableStateOf(false); private set
+
     /** Set when a new external payload replaced work the user had not finished. */
     var supersededNotice by mutableStateOf<String?>(null); private set
 
     /** Set when a capture ran but recognised nothing worth analysing. */
     var captureNotice by mutableStateOf<String?>(null); private set
-
     /** Mirrors [CaptureSession.state] for the UI (drives any "session active" indication). */
     val captureState: CaptureState get() = capture.state
 
@@ -105,21 +151,41 @@ class FlowViewModel(
         analysis = null; selected = null; output = null; error = null
         // Any "previously cleared" / "superseded" / capture notice is now stale.
         clearedNotice = null; supersededNotice = null; captureNotice = null
-        runCatching { repository.analyze(input, sourceType) }.onSuccess {
-            analysis = it
-            page = Page.ANALYSIS
-        }.onFailure {
-            error = it.message ?: "分析失败，请重试"
-            page = Page.INPUT
+        // Engines may reach a network service, so this is asynchronous; the UI reads `busy` to show
+        // progress rather than appearing to do nothing.
+        busy = true
+        viewModelScope.launch {
+            try {
+                analysis = repository.analyze(input, sourceType)
+                page = Page.ANALYSIS
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = e.message ?: "分析失败，请重试"
+                page = Page.INPUT
+            } finally {
+                busy = false
+            }
         }
     }
 
     fun choose(action: NextAction) {
         val current = analysis ?: return
         if (action !in current.actions) return
-        output = repository.execute(current, action)
-        selected = action
-        page = Page.ACTION
+        busy = true
+        viewModelScope.launch {
+            try {
+                output = repository.execute(current, action)
+                selected = action
+                page = Page.ACTION
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                error = e.message ?: "生成失败，请重试"
+            } finally {
+                busy = false
+            }
+        }
     }
 
     fun editReply(style: String, text: String) {
@@ -134,9 +200,13 @@ class FlowViewModel(
         when (page) {
             Page.ACTION -> { selected = null; output = null; page = Page.ANALYSIS }
             Page.INPUT, Page.ANALYSIS -> endSession()
-            Page.HOME -> Unit
+            // Settings is a side trip: leaving it returns home without touching the session.
+            Page.SETTINGS, Page.HOME -> page = Page.HOME
         }
     }
+
+    /** Opens the engine configuration screen. */
+    fun openSettings() { page = Page.SETTINGS }
 
     fun endSession() {
         capture.end(CaptureEndReason.USER_ENDED)

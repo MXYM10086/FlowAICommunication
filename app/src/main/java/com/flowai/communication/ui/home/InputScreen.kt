@@ -1,4 +1,4 @@
-package com.flowai.communication.ui.home
+﻿package com.flowai.communication.ui.home
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -8,7 +8,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.flowai.communication.data.model.SourceType
 import com.flowai.communication.ui.components.InfoCard
-import com.flowai.communication.ui.components.MockNote
+import com.flowai.communication.ui.components.EngineNote
 
 @Composable fun InputScreen(
     text: String,
@@ -22,7 +22,7 @@ import com.flowai.communication.ui.components.MockNote
     Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         Text("粘贴聊天文本", style = MaterialTheme.typography.headlineMedium)
         Text("每行一条消息，推荐使用“我：…”和“对方：…”。无说话人标签的行会标记为未知。")
-        MockNote("内置案例使用固定模拟结果；其他文本使用通用模板。")
+        EngineNote()
         supersededNotice?.let { InfoCard(it, listOf("新内容已载入，上面那段分析不再保留。")) }
         clearedNotice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
         val sourceNotice = when (source) {

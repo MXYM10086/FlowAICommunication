@@ -1,4 +1,4 @@
-package com.flowai.communication.ui.action
+﻿package com.flowai.communication.ui.action
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
@@ -15,7 +15,7 @@ import com.flowai.communication.ui.components.*
     var copied by remember { mutableStateOf(false) }
     LazyColumn(Modifier.fillMaxSize().imePadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text(action.title, style = MaterialTheme.typography.headlineMedium) }
-        item { MockNote(result.note) }
+        item { EngineNote(result.note) }
         if (result.replies.isNotEmpty()) item { Text("推荐回复 · 可编辑后复制", style = MaterialTheme.typography.titleMedium) }
         result.replies.forEach { reply -> item(key = reply.style) {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {

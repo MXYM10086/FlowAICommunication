@@ -1,4 +1,4 @@
-package com.flowai.communication.ui.analysis
+﻿package com.flowai.communication.ui.analysis
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
@@ -12,7 +12,7 @@ import com.flowai.communication.ui.components.*
     val s = result.state
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text(s.topic, style = MaterialTheme.typography.headlineMedium) }
-        item { MockNote(s.confidenceNote ?: "Mock 模拟分析") }
+        item { EngineNote(s.confidenceNote ?: "Mock 模拟分析") }
         item { InfoCard("当前沟通状态 · ${stageLabel(s.stage)}", s.participantGoals) }
         item { InfoCard("沟通信号", s.communicationSignals) }
         item { InfoCard("未解决问题", s.unresolvedIssues) }

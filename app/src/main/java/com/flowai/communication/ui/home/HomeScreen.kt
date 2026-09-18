@@ -1,4 +1,4 @@
-package com.flowai.communication.ui.home
+﻿package com.flowai.communication.ui.home
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
@@ -19,7 +19,8 @@ import com.flowai.communication.ui.components.*
     clearedNotice: String?,
     captureNotice: String? = null,
     captureInProgress: Boolean = false,
-    onRequestCapture: () -> Unit = {}
+    onRequestCapture: () -> Unit = {},
+    onOpenSettings: () -> Unit = {}
 ) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         item {
@@ -27,7 +28,7 @@ import com.flowai.communication.ui.components.*
             Spacer(Modifier.height(8.dp))
             Text("把一段聊天粘进来，先看懂沟通状态，再决定怎么回、怎么做。", style = MaterialTheme.typography.bodyLarge)
         }
-        item { MockNote() }
+        item { EngineNote() }
         clearedNotice?.let { message -> item { InfoCard(message, listOf("原文、分析与回复已从本次会话移除。你主动复制的内容仍在剪贴板。")) } }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
@@ -129,8 +130,13 @@ import com.flowai.communication.ui.components.*
             }
         }
         item {
-            OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) { Text("导入聊天截图 · 后续开放") }
-            Text("截图识别尚未接入；悬浮入口已可用。", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) {
+                Text("分析引擎设置")
+            }
+            Text(
+                "默认在本机分析，聊天内容不离开手机。也可以填写自己的分析服务地址，让内容上传分析（需另行同意）。",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
         item { InfoCard("内容只用于本次会话", listOf(
             "结束或返回首页后清除，不保留最近分析。",

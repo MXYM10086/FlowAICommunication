@@ -24,8 +24,23 @@ private val colors = lightColorScheme(
         }
     }
 }
-@Composable fun MockNote(text: String = "本地 Mock 演示 · 无需 API Key · 不上传聊天内容") {
+/**
+ * States where analysis happens, based on the actual configuration.
+ *
+ * Not a fixed "local only" banner: the app can be pointed at an analysis service, and claiming
+ * text never leaves the phone after that would be false.
+ */
+@Composable fun EngineNote(text: String? = null) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val settings = androidx.compose.runtime.remember {
+        com.flowai.communication.ai.EngineSettingsStore(context).load()
+    }
+    val resolved = text ?: when {
+        !settings.isConfigured -> "本机分析 · 聊天内容不离开手机"
+        !settings.hasConsent -> "已配置分析服务，但尚未同意上传 · 当前仍在本机分析"
+        else -> "上传分析 · 你主动提供的内容会发送至已配置的服务"
+    }
     Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(14.dp)) {
-        Text(text, Modifier.fillMaxWidth().padding(14.dp), style = MaterialTheme.typography.bodySmall)
+        Text(resolved, Modifier.fillMaxWidth().padding(14.dp), style = MaterialTheme.typography.bodySmall)
     }
 }

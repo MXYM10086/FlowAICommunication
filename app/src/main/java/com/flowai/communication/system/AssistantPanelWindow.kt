@@ -1,4 +1,4 @@
-package com.flowai.communication.system
+﻿package com.flowai.communication.system
 
 import android.annotation.SuppressLint
 import android.content.Context
@@ -25,9 +25,12 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
-import com.flowai.communication.ai.MockLlmService
-import com.flowai.communication.data.model.SourceType
+import com.flowai.communication.ai.EngineSettingsStore
+import com.flowai.communication.data.model.*
 import com.flowai.communication.data.repository.ConversationRepository
+import com.flowai.communication.domain.ChatToActionEngine
+import com.flowai.communication.domain.ConversationStateBuilder
+import com.flowai.communication.domain.NextActionEngine
 import com.flowai.communication.domain.PlainTextDialogueParser
 import com.flowai.communication.ui.components.FlowTheme
 import com.flowai.communication.ui.panel.AssistantPanel
@@ -60,8 +63,8 @@ class AssistantPanelWindow(
     private var view: android.view.View? = null
 
     /** Repository is shared with the app's flow so results stay identical. */
-    private val mock = MockLlmService()
-    private val repository = ConversationRepository(PlainTextDialogueParser(), mock, mock, mock)
+    private val engine = ConfigurableEngine(context)
+    private val repository = ConversationRepository(PlainTextDialogueParser(), engine, engine, engine)
 
     override val lifecycle: Lifecycle get() = lifecycleRegistry
     override val viewModelStore: ViewModelStore get() = store
@@ -317,6 +320,29 @@ class AssistantPanelWindow(
         /** Matches the cap the app and the repository enforce on pasted chat text. */
         const val MAX_INPUT_CHARS = 20_000
     }
+}
+
+/**
+ * Presents the configured engine through all three engine interfaces.
+ *
+ * Delegates to whichever engine the settings select, resolved on each call so a configuration
+ * change takes effect on the next analysis.
+ */
+private class ConfigurableEngine(context: Context) :
+    ConversationStateBuilder, NextActionEngine, ChatToActionEngine {
+
+    private val factory = EngineSettingsStore.engineFactory(context)
+
+    override suspend fun build(context: ContextCapsule): ConversationState = factory().build(context)
+
+    override suspend fun recommend(state: ConversationState): List<NextAction> =
+        factory().recommend(state)
+
+    override suspend fun execute(
+        context: ContextCapsule,
+        state: ConversationState,
+        action: NextAction
+    ): ActionResult = factory().execute(context, state, action)
 }
 
 /**

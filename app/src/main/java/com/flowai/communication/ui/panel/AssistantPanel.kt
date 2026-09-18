@@ -15,6 +15,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 import com.flowai.communication.data.model.ActionObject
 import com.flowai.communication.data.model.AnalysisResult
 import com.flowai.communication.data.model.ConversationStage
@@ -63,8 +64,8 @@ class AssistantPanelState(initialText: String? = null) {
 @Composable
 fun AssistantPanel(
     state: AssistantPanelState,
-    analyze: (String) -> AnalysisResult?,
-    execute: (AnalysisResult, NextAction) -> ExecutedAction?,
+    analyze: suspend (String) -> AnalysisResult?,
+    execute: suspend (AnalysisResult, NextAction) -> ExecutedAction?,
     onClose: () -> Unit,
     onOpenApp: () -> Unit,
     /**
@@ -94,6 +95,10 @@ fun AssistantPanel(
     var error by state::error
     var copied by state::copied
     val scroll = rememberScrollState()
+    val scope = rememberCoroutineScope()
+    // Engine calls may reach a network service, so the buttons need a progress state; otherwise a
+    // slow response looks like a dead button.
+    var busy by remember { mutableStateOf(false) }
 
     // A capture fills the input box, replacing whatever was there.
     LaunchedEffect(capturedText) {
@@ -158,22 +163,29 @@ fun AssistantPanel(
                         }
                     }) { Text("粘贴剪贴板") }
                     Button(
-                        // Enabled only with something to analyse. A button that is always tappable
-                        // but silently does nothing reads as "the app is broken"; a disabled one
-                        // explains itself.
-                        enabled = input.isNotBlank(),
+                        // Enabled only with something to analyse, and not while a call is running.
+                        // A button that is always tappable but silently does nothing reads as "the
+                        // app is broken"; a disabled one explains itself.
+                        enabled = input.isNotBlank() && !busy,
                         onClick = {
-                            val r = analyze(input)
-                            if (r == null) {
-                                error = "分析失败，请检查内容"
-                                Toast.makeText(context, "分析失败，请检查内容", Toast.LENGTH_SHORT).show()
-                            } else {
-                                error = null
-                                result = r
+                            busy = true
+                            scope.launch {
+                                try {
+                                    val r = analyze(input)
+                                    if (r == null) {
+                                        error = "分析失败，请检查内容"
+                                        Toast.makeText(context, "分析失败，请检查内容", Toast.LENGTH_SHORT).show()
+                                    } else {
+                                        error = null
+                                        result = r
+                                    }
+                                } finally {
+                                    busy = false
+                                }
                             }
                         },
                         modifier = Modifier.weight(1f)
-                    ) { Text(if (input.isBlank()) "先粘贴或截屏" else "分析") }
+                    ) { Text(if (busy) "分析中…" else if (input.isBlank()) "先粘贴或截屏" else "分析") }
                 }
                 if (input.isBlank()) {
                     Spacer(Modifier.height(6.dp))
@@ -191,9 +203,18 @@ fun AssistantPanel(
                 analyzed.actions.forEachIndexed { i, a ->
                     Card(
                         onClick = {
+                            if (busy) return@Card
                             chosen = a
-                            executed = execute(analyzed, a)
+                            executed = null
                             copied = null
+                            busy = true
+                            scope.launch {
+                                try {
+                                    executed = execute(analyzed, a)
+                                } finally {
+                                    busy = false
+                                }
+                            }
                         },
                         modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                         colors = CardDefaults.cardColors(

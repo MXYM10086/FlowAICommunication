@@ -1,4 +1,4 @@
-package com.flowai.communication
+﻿package com.flowai.communication
 
 import androidx.lifecycle.ViewModelStore
 import com.flowai.communication.data.model.ActionObject
@@ -10,8 +10,12 @@ import com.flowai.communication.ui.FlowViewModel
 import com.flowai.communication.ui.Page
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Rule
 
 class FlowSessionTest {
+    @get:Rule
+    val mainDispatcher = MainDispatcherRule()
+
     private fun replySession() = FlowViewModel().apply {
         openInput(DemoConversations.A)
         analyze()

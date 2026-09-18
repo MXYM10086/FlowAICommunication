@@ -1,4 +1,4 @@
-package com.flowai.communication.ai
+﻿package com.flowai.communication.ai
 import com.flowai.communication.data.model.*
 import com.flowai.communication.data.repository.DemoConversations
 import com.flowai.communication.domain.PlainTextDialogueParser
@@ -8,7 +8,7 @@ class MockLlmService : LlmService {
         context.messages.map { it.speaker to it.text } ==
             PlainTextDialogueParser().parse(demo).map { it.speaker to it.text }
 
-    override fun build(context: ContextCapsule): ConversationState {
+    override suspend fun build(context: ContextCapsule): ConversationState {
         require(context.messages.isNotEmpty()) { "请先输入聊天内容" }
         return when {
             isDemo(context, DemoConversations.A) -> ConversationState(
@@ -31,7 +31,7 @@ class MockLlmService : LlmService {
                 "通用 Mock 模板，不是真实 AI 分析；不会套用 Demo 的人员、时间或任务。")
         }
     }
-    override fun recommend(state: ConversationState): List<NextAction> {
+    override suspend fun recommend(state: ConversationState): List<NextAction> {
         val actions = when (state.topic) {
             "任务完成进度" -> listOf(
                 action("deadline", "给出明确完成时间", "补充一个可兑现的交付时间", ActionType.GIVE_DEADLINE, "尚未明确具体完成时间", 1),
@@ -51,7 +51,7 @@ class MockLlmService : LlmService {
     private fun action(id: String, title: String, description: String, type: ActionType, reason: String, priority: Int) =
         NextAction(id, title, description, type, reason, priority)
 
-    override fun execute(context: ContextCapsule, state: ConversationState, action: NextAction): ActionResult {
+    override suspend fun execute(context: ContextCapsule, state: ConversationState, action: NextAction): ActionResult {
         require(action in recommend(state)) { "请从当前分析的推荐动作中选择" }
         if (action.type in listOf(ActionType.EXTRACT_TASK, ActionType.CREATE_EVENT)) {
             if (!isDemo(context, DemoConversations.B)) return ActionResult(note = "当前 Mock 没有识别到可提取事项。请使用 Demo B 验证任务与事件流程。")
