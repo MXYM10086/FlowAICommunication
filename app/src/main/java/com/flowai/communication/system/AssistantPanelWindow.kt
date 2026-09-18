@@ -64,7 +64,27 @@ class AssistantPanelWindow(
     override val viewModelStore: ViewModelStore get() = store
     override val savedStateRegistry: SavedStateRegistry get() = savedStateController.savedStateRegistry
 
-    private var params: WindowManager.LayoutParams? = null
+    /**
+     * Window params are rebuilt for every attach.
+     *
+     * Reusing the same LayoutParams after `removeView` re-attached the panel with the *bubble's*
+     * geometry (observed on device as `(1230,1002)(wrapxwrap)`), so the panel was added as a tiny
+     * off-screen box: `dumpsys` showed a visible window while nothing was drawn.
+     */
+    private fun buildLayoutParams(): WindowManager.LayoutParams =
+        WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            // Overlay type: sits above the chat app without modifying it.
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            // Focusable is required so the user can type/paste into the panel; the window is only as
+            // large as its content so the app underneath stays visible around it.
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+        }
 
     /** Kept so a suspended panel can be re-attached with its state intact. */
     private var rootView: android.view.View? = null
@@ -88,7 +108,7 @@ class AssistantPanelWindow(
      */
     fun suspendPanel() {
         val current = view ?: return
-        runCatching { windowManager.removeView(current) }
+        runCatching { windowManager.removeViewImmediate(current) }
             .onFailure { e -> Log.e(TAG, "removeView failed", e) }
         view = null
         suspended = true
@@ -100,8 +120,7 @@ class AssistantPanelWindow(
         if (!suspended) return
         suspended = false
         val root = rootView ?: return
-        val lp = params ?: return
-        runCatching { windowManager.addView(root, lp) }
+        runCatching { windowManager.addView(root, buildLayoutParams()) }
             .onFailure {
                 Log.e(TAG, "could not re-add assistant panel", it)
                 return
@@ -138,21 +157,7 @@ class AssistantPanelWindow(
             setViewTreeSavedStateRegistryOwner(this@AssistantPanelWindow)
         }
 
-        val layoutParams = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            // Overlay type: sits above the chat app without modifying it.
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            // Focusable is required so the user can type/paste into the panel; the window is only as
-            // large as its content so the app underneath stays visible around it.
-            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-        }
-
-        runCatching { windowManager.addView(root, layoutParams) }
+        runCatching { windowManager.addView(root, buildLayoutParams()) }
             .onFailure {
                 Log.e(TAG, "could not add assistant panel", it)
                 destroy()
@@ -160,17 +165,15 @@ class AssistantPanelWindow(
             }
         view = root
         rootView = root
-        params = layoutParams
         Log.i(TAG, "assistant panel shown")
     }
 
     fun hide() {
         view?.let {
-            runCatching { windowManager.removeView(it) }
+            runCatching { windowManager.removeViewImmediate(it) }
                 .onFailure { e -> Log.e(TAG, "removeView failed", e) }
         }
         view = null
-        params = null
         rootView = null
         suspended = false
     }
