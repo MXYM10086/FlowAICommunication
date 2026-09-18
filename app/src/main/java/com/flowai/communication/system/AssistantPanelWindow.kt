@@ -12,6 +12,8 @@ import android.widget.FrameLayout
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.LifecycleRegistry
@@ -84,10 +86,28 @@ class AssistantPanelWindow(
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            // Resize rather than pan. Panning moved the whole panel up when the keyboard opened,
+            // pushing its lower controls out of reach on tall screens.
+            softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         }
 
     /** Kept so a suspended panel can be re-attached with its state intact. */
     private var rootView: android.view.View? = null
+
+    /**
+     * Height allowance as a fraction of the screen height.
+     *
+     * A ratio rather than a dp constant, so the panel scales across devices instead of relying on a
+     * number chosen for one phone.
+     */
+    private val maxPanelHeightFraction = DEFAULT_MAX_HEIGHT_FRACTION
+
+    /** The fraction above, converted to dp against the current display. */
+    private val maxPanelHeightDp: Dp
+        get() {
+            val metrics = context.resources.displayMetrics
+            return (metrics.heightPixels / metrics.density * maxPanelHeightFraction).dp
+        }
 
     /** True while the panel is off screen but still alive. */
     private var suspended = false
@@ -140,7 +160,7 @@ class AssistantPanelWindow(
             setViewTreeLifecycleOwner(this@AssistantPanelWindow)
             setViewTreeViewModelStoreOwner(this@AssistantPanelWindow)
             setViewTreeSavedStateRegistryOwner(this@AssistantPanelWindow)
-            setContent { FlowTheme { PanelContent(seed) } }
+            setContent { FlowTheme { PanelContent(seed, maxPanelHeightDp) } }
         }
 
         // ComposeView is final, so outside touches are caught by a wrapper instead of a subclass.
@@ -186,9 +206,10 @@ class AssistantPanelWindow(
     }
 
     @Composable
-    private fun PanelContent(initialText: String?) {
+    private fun PanelContent(initialText: String?, maxHeight: Dp) {
         AssistantPanel(
             initialText = initialText,
+            maxHeight = maxHeight,
             analyze = { text ->
                 runCatching { repository.analyze(text, SourceType.TEXT) }.getOrNull()
             },
@@ -252,6 +273,14 @@ class AssistantPanelWindow(
 
     private companion object {
         const val TAG = "FlowAI"
+
+        /**
+         * Share of the screen height the panel may occupy.
+         *
+         * Leaves the content underneath visible — the point of an in-place assistant — while giving
+         * long analyses room to breathe instead of a fixed dp cap tuned to one device.
+         */
+        const val DEFAULT_MAX_HEIGHT_FRACTION = 0.68f
     }
 }
 

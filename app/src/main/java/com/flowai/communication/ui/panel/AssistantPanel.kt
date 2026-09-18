@@ -1,5 +1,7 @@
 package com.flowai.communication.ui.panel
 
+import android.content.Context
+import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -9,7 +11,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.flowai.communication.data.model.ActionObject
 import com.flowai.communication.data.model.AnalysisResult
@@ -55,9 +59,18 @@ fun AssistantPanel(
     /** Text produced by a capture, delivered after the capture activity returns. */
     capturedText: String? = null,
     /** Failure reported by a capture, if any. */
-    captureFailure: String? = null
+    captureFailure: String? = null,
+    /**
+     * Upper bound for the panel's height.
+     *
+     * Passed in rather than hard-coded so the panel can be sized against the space actually
+     * available — which shrinks while the keyboard is up. A fixed cap left the lower buttons
+     * off-screen on tall phones with the keyboard showing.
+     */
+    maxHeight: Dp
 ) {
     val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
     var input by remember { mutableStateOf(initialText.orEmpty()) }
     var result by remember { mutableStateOf<AnalysisResult?>(null) }
     var chosen by remember { mutableStateOf<NextAction?>(null) }
@@ -86,7 +99,7 @@ fun AssistantPanel(
         Column(
             Modifier
                 .padding(16.dp)
-                .heightIn(max = 520.dp)
+                .heightIn(max = maxHeight)
                 .verticalScroll(scroll)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -117,16 +130,37 @@ fun AssistantPanel(
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = {
                         val t = clipboard.getText()?.text.orEmpty()
-                        if (t.isNotBlank()) { input = t.take(20_000); error = null }
-                        else error = "剪贴板里没有文字"
+                        if (t.isNotBlank()) {
+                            input = t.take(20_000); error = null
+                        } else {
+                            error = "剪贴板里没有文字"
+                            Toast.makeText(
+                                context,
+                                "剪贴板里没有文字，请先复制一段聊天",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
                     }) { Text("粘贴剪贴板") }
                     Button(
                         onClick = {
                             if (input.isBlank()) {
+                                // The error line sits at the very bottom of a scrollable panel, so
+                                // when the panel is long the user sees nothing happen at all.
+                                // A toast is visible regardless of scroll position.
                                 error = "请先粘贴聊天内容或截屏"
+                                Toast.makeText(
+                                    context,
+                                    "请先粘贴聊天内容，或点上面的「截屏分析」",
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             } else {
                                 val r = analyze(input)
-                                if (r == null) error = "分析失败，请检查内容" else result = r
+                                if (r == null) {
+                                    error = "分析失败，请检查内容"
+                                    Toast.makeText(context, "分析失败，请检查内容", Toast.LENGTH_SHORT).show()
+                                } else {
+                                    result = r
+                                }
                             }
                         },
                         modifier = Modifier.weight(1f)
