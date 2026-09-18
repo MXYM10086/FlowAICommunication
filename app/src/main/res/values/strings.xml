@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Shown in the system share sheet when text is shared into FlowAI. -->
+    <string name="share_target_label">FlowAI 分析沟通</string>
+    <!-- Shown in the text-selection toolbar when text is selected in another app. -->
+    <string name="process_text_label">用 FlowAI 分析</string>
+</resources>

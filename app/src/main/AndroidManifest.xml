@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- API 31 backup rules are ignored on older devices; fullBackupContent covers those. -->
+    <application android:allowBackup="false" android:fullBackupContent="false"
+        android:icon="@mipmap/ic_launcher" android:dataExtractionRules="@xml/data_extraction_rules"
+        tools:targetApi="31" android:label="FlowAI Communication"
+        android:theme="@style/Theme.FlowAI" android:supportsRtl="true">
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!--
+              Real senders vary: WeChat and other apps commonly attach styled text as
+              EXTRA_HTML_TEXT or as text/html, which a text/plain-only filter never matches.
+              text/* is the broadest filter the platform supports for the text family.
+            -->
+            <intent-filter android:label="@string/share_target_label">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/*" />
+            </intent-filter>
+            <!--
+              Selection-toolbar entry (Android 6.0+): the user selects text in ANY app — including
+              chat apps that never expose a share action for it — and picks FlowAI right from the
+              floating selection toolbar. Closer to the "understand this conversation" intent than
+              sharing a single message, and it needs no extra permission.
+            -->
+            <intent-filter android:label="@string/process_text_label">
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
