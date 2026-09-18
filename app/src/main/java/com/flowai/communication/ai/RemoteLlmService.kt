@@ -221,10 +221,31 @@ class RemoteLlmService(
         if (protocol == "https") return true
         if (protocol != "http") return false
         if (!BuildConfig.DEBUG) return false
+        return isLoopbackOrPrivate()
+    }
+
+    /**
+     * True for loopback and the RFC1918 private ranges, plus the emulator's host alias.
+     *
+     * Spelled out as prefix checks rather than a table of literals: the ranges are a property of IP
+     * addressing, not addresses belonging to anyone in particular.
+     */
+    private fun URL.isLoopbackOrPrivate(): Boolean {
         val h = host.orEmpty()
-        return h == "localhost" || h == "127.0.0.1" || h == "10.0.2.2" ||
-            h.startsWith("192.168.") || h.startsWith("10.") ||
-            h.matches(Regex("""172\.(1[6-9]|2\d|3[01])\..*"""))
+        if (h == "localhost" || h == "127.0.0.1" || h == "::1") return true
+        // The host machine as seen from an Android emulator.
+        if (h == "10.0.2.2") return true
+
+        val octets = h.split('.')
+        if (octets.size != 4) return false
+        val first = octets[0].toIntOrNull() ?: return false
+        val second = octets[1].toIntOrNull() ?: return false
+        return when (first) {
+            10 -> true                                   // 10.0.0.0/8
+            172 -> second in 16..31                      // 172.16.0.0/12
+            192 -> second == 168                         // 192.168.0.0/16
+            else -> false
+        }
     }
 
     private companion object {
