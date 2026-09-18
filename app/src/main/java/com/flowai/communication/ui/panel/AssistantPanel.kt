@@ -34,10 +34,26 @@ data class ExecutedAction(
 )
 
 /**
+ * State the panel must not lose when its view is rebuilt.
+ *
+ * The panel's window is torn down while a capture runs, and re-attaching the same detached view
+ * left the rebuilt hierarchy unable to receive touches. Recreating the view fixes that, but
+ * anything held in `remember` would then be lost, so it lives here and outlives the view.
+ */
+class AssistantPanelState(initialText: String? = null) {
+    var input by mutableStateOf(initialText.orEmpty())
+    var result by mutableStateOf<AnalysisResult?>(null)
+    var chosen by mutableStateOf<NextAction?>(null)
+    var executed by mutableStateOf<ExecutedAction?>(null)
+    var error by mutableStateOf<String?>(null)
+    var copied by mutableStateOf<String?>(null)
+}
+
+/**
  * The in-place assistant panel.
  *
  * Shaped for use *while the user is still in the chat app*: a bottom sheet that takes pasted text,
- * shows what the conversation is doing, and offers the next actions plus candidate replies —
+ * shows what the conversation is doing, and offers the next actions plus candidate replies,
  * without navigating away.
  *
  * It states plainly that the user supplies the text. The assistant never reads the screen, which
@@ -46,7 +62,7 @@ data class ExecutedAction(
  */
 @Composable
 fun AssistantPanel(
-    initialText: String? = null,
+    state: AssistantPanelState,
     analyze: (String) -> AnalysisResult?,
     execute: (AnalysisResult, NextAction) -> ExecutedAction?,
     onClose: () -> Unit,
@@ -71,12 +87,12 @@ fun AssistantPanel(
 ) {
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
-    var input by remember { mutableStateOf(initialText.orEmpty()) }
-    var result by remember { mutableStateOf<AnalysisResult?>(null) }
-    var chosen by remember { mutableStateOf<NextAction?>(null) }
-    var executed by remember { mutableStateOf<ExecutedAction?>(null) }
-    var error by remember { mutableStateOf<String?>(null) }
-    var copied by remember { mutableStateOf<String?>(null) }
+    var input by state::input
+    var result by state::result
+    var chosen by state::chosen
+    var executed by state::executed
+    var error by state::error
+    var copied by state::copied
     val scroll = rememberScrollState()
 
     // A capture fills the input box, replacing whatever was there.

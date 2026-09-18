@@ -31,6 +31,7 @@ import com.flowai.communication.data.repository.ConversationRepository
 import com.flowai.communication.domain.PlainTextDialogueParser
 import com.flowai.communication.ui.components.FlowTheme
 import com.flowai.communication.ui.panel.AssistantPanel
+import com.flowai.communication.ui.panel.AssistantPanelState
 import com.flowai.communication.ui.panel.ExecutedAction
 
 /**
@@ -120,47 +121,56 @@ class AssistantPanelWindow(
     private var pendingInitialText: String? = null
 
     /**
-     * Takes the panel off screen but keeps its object, Compose state and lifecycle intact.
+     * Takes the panel off screen while a capture runs.
      *
-     * Used around a capture: the panel must not appear in the frame, but tearing it down and
-     * rebuilding it means the consent dialogs happen while the panel's state has nowhere to live,
-     * and the text the user was working with is lost. Suspending only detaches the view.
+     * The window must not be in the frame, so the view is detached. Its *state* is kept in
+     * [panelState], which outlives the view.
      */
     fun suspendPanel() {
         val current = view ?: return
         runCatching { windowManager.removeViewImmediate(current) }
             .onFailure { e -> Log.e(TAG, "removeView failed", e) }
         view = null
+        rootView = null
         suspended = true
         Log.i(TAG, "assistant panel suspended")
     }
 
-    /** Re-attaches a suspended panel, preserving its state. */
+    /**
+     * Restores the panel after a capture by rebuilding the view, not by re-attaching the old one.
+     *
+     * Re-adding a detached view produced a panel that rendered but no longer responded to touches:
+     * tapping any control did nothing. Rebuilding costs one view hierarchy and keeps the user's
+     * text, which lives in [panelState].
+     */
     fun resumePanel() {
         if (!suspended) return
         suspended = false
-        val root = rootView ?: return
-        runCatching { windowManager.addView(root, buildLayoutParams()) }
-            .onFailure {
-                Log.e(TAG, "could not re-add assistant panel", it)
-                return
-            }
-        view = root
-        Log.i(TAG, "assistant panel resumed")
+        attach()
+        Log.i(TAG, "assistant panel resumed (rebuilt)")
     }
 
     fun show(initialText: String? = null) {
         if (view != null) return
         val seed = initialText ?: pendingInitialText
+        if (!seed.isNullOrBlank() && panelState.input.isBlank()) {
+            panelState.input = seed
+        }
+        pendingInitialText = null
         savedStateController.performRestore(null)
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED
+        attach()
+        Log.i(TAG, "assistant panel shown")
+    }
 
+    /** Builds the view hierarchy and attaches it to the window. */
+    private fun attach() {
         val composeView = ComposeView(context).apply {
             setViewTreeLifecycleOwner(this@AssistantPanelWindow)
             setViewTreeViewModelStoreOwner(this@AssistantPanelWindow)
             setViewTreeSavedStateRegistryOwner(this@AssistantPanelWindow)
-            setContent { FlowTheme { PanelContent(seed, maxPanelHeightDp) } }
+            setContent { FlowTheme { PanelContent(panelState, maxPanelHeightDp) } }
         }
 
         // ComposeView is final, so outside touches are caught by a wrapper instead of a subclass.
@@ -185,7 +195,6 @@ class AssistantPanelWindow(
             }
         view = root
         rootView = root
-        Log.i(TAG, "assistant panel shown")
     }
 
     fun hide() {
@@ -205,10 +214,15 @@ class AssistantPanelWindow(
         onClose()
     }
 
+    /**
+     * Survives the view being rebuilt around a capture, so the user's text and results are kept.
+     */
+    private val panelState = AssistantPanelState()
+
     @Composable
-    private fun PanelContent(initialText: String?, maxHeight: Dp) {
+    private fun PanelContent(state: AssistantPanelState, maxHeight: Dp) {
         AssistantPanel(
-            initialText = initialText,
+            state = state,
             maxHeight = maxHeight,
             analyze = { text ->
                 runCatching { repository.analyze(text, SourceType.TEXT) }.getOrNull()
