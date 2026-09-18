@@ -74,8 +74,12 @@ import com.flowai.communication.ui.components.*
                     if (!granted) "需要先在系统设置里允许「显示在其他应用上层」。"
                     else if (running) "悬浮球已开启，可在其他应用上方随时点开 FlowAI。"
                     else "已获得权限，可以开启悬浮球。",
-                    "悬浮球只作为入口，不会自动读取任何聊天内容。"
-                )
+                    "悬浮球只作为入口，不会自动读取任何聊天内容。",
+                    // Reinstalling the app clears this permission on some ROMs, which looks like the
+                    // bubble silently vanished; say so instead of leaving the user guessing.
+                    if (!granted) "提示：重新安装应用后该权限可能会被系统清除，需要重新授权。"
+                    else ""
+                ).filter { it.isNotEmpty() }
             )
             Spacer(Modifier.height(8.dp))
             if (!granted) {
