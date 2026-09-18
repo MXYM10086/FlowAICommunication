@@ -62,4 +62,62 @@ object OcrTextAssembler {
 
     /** Convenience: assemble only plausible lines. */
     fun assembleDialogue(lines: List<OcrLine>): String = assemble(lines.filter(::isPlausibleDialogueLine))
+
+    /**
+     * Assembles a chat-shaped transcript, inferring speakers from where the text sits.
+     *
+     * A bare transcription cannot be analysed: the dialogue parser needs `speaker: text`, and
+     * without labels every line becomes an unknown speaker, which collapses the analysis into the
+     * generic fallback. Chat apps place the two parties on opposite sides, so horizontal alignment
+     * is the signal — right-aligned lines are the user's own messages, left-aligned lines belong to
+     * the other party.
+     *
+     * Lines that span most of the width carry no positional signal and are left unattributed rather
+     * than guessed at.
+     *
+     * Free of Android APIs so it is unit-testable.
+     */
+    fun assembleWithSpeakers(lines: List<OcrLine>, imageWidth: Int): String {
+        if (imageWidth <= 0) return assembleDialogue(lines)
+        val usable = lines.filter(::isPlausibleDialogueLine)
+        if (usable.isEmpty()) return ""
+
+        val order = usable.sortedWith(compareBy({ it.top }, { it.left }))
+        return order.joinToString("\n") { line ->
+            when (sideOf(line, imageWidth)) {
+                Side.MINE -> LABEL_MINE + line.text.trim()
+                Side.THEIRS -> LABEL_THEIRS + line.text.trim()
+                Side.UNCLEAR -> line.text.trim()
+            }
+        }
+    }
+
+    private enum class Side { MINE, THEIRS, UNCLEAR }
+
+    /**
+     * Which side of the conversation a line belongs to.
+     *
+     * Requires both the centre *and* the nearer edge to fall on the same side, so a wide line that
+     * merely leans one way is treated as unclear instead of being mislabelled.
+     */
+    private fun sideOf(line: OcrLine, imageWidth: Int): Side {
+        val centre = imageWidth / 2f
+        val lineCentre = (line.left + line.right) / 2f
+        val spansMost = (line.right - line.left) >= imageWidth * SPAN_RATIO
+        if (spansMost) return Side.UNCLEAR
+        return when {
+            lineCentre > centre + centre * SIDE_MARGIN_RATIO -> Side.MINE
+            lineCentre < centre - centre * SIDE_MARGIN_RATIO -> Side.THEIRS
+            else -> Side.UNCLEAR
+        }
+    }
+
+    const val LABEL_MINE = "我："
+    const val LABEL_THEIRS = "对方："
+
+    /** A line wider than this share of the image is treated as spanning the whole width. */
+    private const val SPAN_RATIO = 0.82f
+
+    /** How far past the centre a line must sit before its side is trusted. */
+    private const val SIDE_MARGIN_RATIO = 0.06f
 }

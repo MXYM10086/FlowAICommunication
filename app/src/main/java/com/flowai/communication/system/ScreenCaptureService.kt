@@ -86,7 +86,11 @@ class ScreenCaptureService : Service() {
         val bitmap = shot.capture(region) ?: return null
         return try {
             val engine = ocr.get() ?: MlKitOcrEngine().also { ocr.set(it) }
-            OcrTextAssembler.assembleDialogue(engine.recognize(bitmap)).ifBlank { null }
+            // Speaker labels are inferred from line alignment: without them the dialogue parser
+            // sees only unknown speakers and the analysis degrades to its generic fallback.
+            OcrTextAssembler
+                .assembleWithSpeakers(engine.recognize(bitmap), bitmap.width)
+                .ifBlank { null }
         } finally {
             // Release the frame immediately; a screenshot is the most sensitive artifact here.
             bitmap.recycle()

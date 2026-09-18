@@ -142,29 +142,30 @@ fun AssistantPanel(
                         }
                     }) { Text("粘贴剪贴板") }
                     Button(
+                        // Enabled only with something to analyse. A button that is always tappable
+                        // but silently does nothing reads as "the app is broken"; a disabled one
+                        // explains itself.
+                        enabled = input.isNotBlank(),
                         onClick = {
-                            if (input.isBlank()) {
-                                // The error line sits at the very bottom of a scrollable panel, so
-                                // when the panel is long the user sees nothing happen at all.
-                                // A toast is visible regardless of scroll position.
-                                error = "请先粘贴聊天内容或截屏"
-                                Toast.makeText(
-                                    context,
-                                    "请先粘贴聊天内容，或点上面的「截屏分析」",
-                                    Toast.LENGTH_SHORT
-                                ).show()
+                            val r = analyze(input)
+                            if (r == null) {
+                                error = "分析失败，请检查内容"
+                                Toast.makeText(context, "分析失败，请检查内容", Toast.LENGTH_SHORT).show()
                             } else {
-                                val r = analyze(input)
-                                if (r == null) {
-                                    error = "分析失败，请检查内容"
-                                    Toast.makeText(context, "分析失败，请检查内容", Toast.LENGTH_SHORT).show()
-                                } else {
-                                    result = r
-                                }
+                                error = null
+                                result = r
                             }
                         },
                         modifier = Modifier.weight(1f)
-                    ) { Text("分析") }
+                    ) { Text(if (input.isBlank()) "先粘贴或截屏" else "分析") }
+                }
+                if (input.isBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "输入框为空：请粘贴聊天内容，或点上面的「截屏分析」",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             } else {
                 Spacer(Modifier.height(6.dp))

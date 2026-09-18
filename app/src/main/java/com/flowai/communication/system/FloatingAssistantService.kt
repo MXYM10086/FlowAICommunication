@@ -8,9 +8,11 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import android.view.Gravity
+import android.view.WindowInsets
 import android.view.WindowManager
 import com.flowai.communication.MainActivity
 import com.flowai.communication.R
@@ -56,6 +58,19 @@ class FloatingAssistantService : Service() {
         }
     }
 
+    /**
+     * Status bar height reported by the system, so the bubble clears system UI on any device.
+     *
+     * Uses the window-metrics insets rather than a dimension lookup: no reflection, and it follows
+     * whatever the current display actually reports (notch, cutout, gesture bar).
+     */
+    private fun statusBarInset(): Int {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) return 0
+        val insets = windowManager.currentWindowMetrics.windowInsets
+            .getInsets(WindowInsets.Type.statusBars())
+        return insets.top
+    }
+
     private fun attachBubble() {
         val size = (BUBBLE_SIZE_DP * resources.displayMetrics.density).toInt()
         params = WindowManager.LayoutParams(
@@ -71,8 +86,13 @@ class FloatingAssistantService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = resources.displayMetrics.widthPixels - size - (MARGIN_DP * resources.displayMetrics.density).toInt()
-            y = resources.displayMetrics.heightPixels / 3
+            val margin = (MARGIN_DP * resources.displayMetrics.density).toInt()
+            // Derived from the current display and safe area rather than a position picked for one
+            // phone: a third of the way down, but never above the status bar or off the screen.
+            x = resources.displayMetrics.widthPixels - size - margin
+            val statusBar = statusBarInset()
+            val preferred = resources.displayMetrics.heightPixels / 3
+            y = preferred.coerceIn(statusBar + margin, (resources.displayMetrics.heightPixels - size).coerceAtLeast(statusBar + margin))
         }
 
         val view = FloatingBubbleView(
