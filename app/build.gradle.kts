@@ -6,8 +6,8 @@ android {
         applicationId = "com.flowai.communication"
         minSdk = 26
         targetSdk = 34
-        versionCode = 23
-        versionName = "1.0.1"
+        versionCode = 24
+        versionName = "1.0.2"
 
         ndk {
             // The bundled ML Kit OCR pipeline ships a 7-12 MB native library PER ABI; shipping all

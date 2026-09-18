@@ -1,12 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Debug only. Permits cleartext HTTP so a developer can point the app at a relay running on their
-  own machine and exercise the remote path.
+  Debug only. Permits cleartext HTTP to loopback addresses so a developer can point the app at a
+  local stub and exercise the request path.
 
-  Release builds do not reference this file, and the app additionally refuses cleartext to any
-  address outside the private ranges (see RemoteLlmService), because conversation text is private.
-  No specific host is listed here: a developer's own address does not belong in the repository.
+  No blanket `cleartextTrafficPermitted="true"`: that would allow plaintext to any host, and
+  conversation text is private. Release builds do not reference this file at all, and
+  RemoteLlmService additionally refuses cleartext outside the private ranges.
 -->
 <network-security-config>
-    <base-config cleartextTrafficPermitted="true" />
+    <base-config cleartextTrafficPermitted="false" />
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
+        <!-- The host machine, as seen from an Android emulator. -->
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
 </network-security-config>
