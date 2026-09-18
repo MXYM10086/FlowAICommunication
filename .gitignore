@@ -4,3 +4,8 @@
 local.properties
 *.iml
 .tools/
+
+# APKs are build outputs, not sources. Rebuild them from source instead of committing.
+# Release artifacts are attached to a tag/release, not tracked in the working tree.
+*.apk
+*.apk.sha256
