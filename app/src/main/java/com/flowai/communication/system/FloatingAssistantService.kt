@@ -31,6 +31,7 @@ class FloatingAssistantService : Service() {
 
     private lateinit var windowManager: WindowManager
     private var bubble: FloatingBubbleView? = null
+    private var panel: AssistantPanelWindow? = null
     private lateinit var params: WindowManager.LayoutParams
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -48,6 +49,11 @@ class FloatingAssistantService : Service() {
         startForeground(NOTIFICATION_ID, buildNotification())
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         attachBubble()
+        instance = this
+        if (openPanelOnStart) {
+            openPanelOnStart = false
+            togglePanel()
+        }
     }
 
     private fun attachBubble() {
@@ -71,7 +77,7 @@ class FloatingAssistantService : Service() {
 
         val view = FloatingBubbleView(
             context = this,
-            onTap = { bringAppForward() },
+            onTap = { togglePanel() },
             onDragEnd = { clampToScreen() }
         ).apply {
             onDrag = { dx, dy ->
@@ -102,8 +108,28 @@ class FloatingAssistantService : Service() {
         runCatching { windowManager.updateViewLayout(view, params) }
     }
 
-    private fun bringAppForward() {
+    /**
+     * Tapping the bubble opens the in-place assistant panel.
+     *
+     * It used to just bring the app forward, which was pointless — the launcher icon already does
+     * that. The product goal is an assistant *inside* the chat app, so the bubble opens the panel
+     * over whatever the user is looking at.
+     */
+    private fun togglePanel() {
         Log.i(TAG, "bubble tapped")
+        val existing = panel
+        if (existing != null) {
+            panel = null
+            existing.destroy()
+            return
+        }
+        val window = AssistantPanelWindow(this) { panel = null }
+        panel = window
+        window.show()
+    }
+
+    /** Escape hatch kept for the panel's "open full app" action. */
+    private fun bringAppForward() {
         val intent = Intent(this, MainActivity::class.java).addFlags(
             Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         )
@@ -135,9 +161,12 @@ class FloatingAssistantService : Service() {
     }
 
     override fun onDestroy() {
+        panel?.destroy()
+        panel = null
         bubble?.let { view -> runCatching { windowManager.removeView(view) } }
         bubble = null
         isRunning = false
+        if (instance === this) instance = null
         Log.i(TAG, "floating assistant stopped")
         super.onDestroy()
     }
@@ -154,9 +183,35 @@ class FloatingAssistantService : Service() {
         var isRunning: Boolean = false
             private set
 
-        /** Starts the bubble. No-op (returns false) when the overlay permission is missing. */
-        fun start(context: Context): Boolean {
+        /** Live instance, so the app can reach the panel without going through the bubble. */
+        @Volatile
+        private var instance: FloatingAssistantService? = null
+
+        /** Set by [start] so a freshly started service opens the panel right away. */
+        @Volatile
+        private var openPanelOnStart: Boolean = false
+
+        /**
+         * Opens the assistant panel without the user having to tap the bubble.
+         *
+         * Needed because injected touches cannot reach an overlay window, so the bubble cannot be
+         * driven from a test harness — and it also gives the app an in-app way to reach the panel.
+         * Returns false when the overlay permission is missing or the service will not start.
+         */
+        fun openPanel(context: Context): Boolean {
             if (!OverlayPermission.isGranted(context)) return false
+            val current = instance
+            if (current != null) {
+                current.togglePanel()
+                return true
+            }
+            return start(context, thenOpenPanel = true)
+        }
+
+        /** Starts the bubble. No-op (returns false) when the overlay permission is missing. */
+        fun start(context: Context, thenOpenPanel: Boolean = false): Boolean {
+            if (!OverlayPermission.isGranted(context)) return false
+            openPanelOnStart = thenOpenPanel
             val intent = Intent(context, FloatingAssistantService::class.java)
             return runCatching { context.startForegroundService(intent) }.isSuccess
         }

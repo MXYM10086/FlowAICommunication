@@ -1,0 +1,248 @@
+package com.flowai.communication.ui.panel
+
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.unit.dp
+import com.flowai.communication.data.model.ActionObject
+import com.flowai.communication.data.model.AnalysisResult
+import com.flowai.communication.data.model.ConversationStage
+import com.flowai.communication.data.model.NextAction
+import com.flowai.communication.data.model.ReplyCandidate
+
+/**
+ * What the engine produced for one chosen action.
+ *
+ * Carries the action's id so the panel can tell a stale result from the current selection.
+ */
+data class ExecutedAction(
+    val actionId: String,
+    val replies: List<ReplyCandidate>,
+    val objects: List<ActionObject>,
+    val note: String
+)
+
+/**
+ * The in-place assistant panel.
+ *
+ * Shaped for use *while the user is still in the chat app*: a bottom sheet that takes pasted text,
+ * shows what the conversation is doing, and offers the next actions plus candidate replies —
+ * without navigating away.
+ *
+ * It states plainly that the user supplies the text. The assistant never reads the screen, which
+ * keeps it on the right side of both the platform's screen-share protection and the product's
+ * Just-in-Time Context rule.
+ */
+@Composable
+fun AssistantPanel(
+    initialText: String? = null,
+    analyze: (String) -> AnalysisResult?,
+    execute: (AnalysisResult, NextAction) -> ExecutedAction?,
+    onClose: () -> Unit,
+    onOpenApp: () -> Unit
+) {
+    val clipboard = LocalClipboardManager.current
+    var input by remember { mutableStateOf(initialText.orEmpty()) }
+    var result by remember { mutableStateOf<AnalysisResult?>(null) }
+    var chosen by remember { mutableStateOf<NextAction?>(null) }
+    var executed by remember { mutableStateOf<ExecutedAction?>(null) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var copied by remember { mutableStateOf<String?>(null) }
+    val scroll = rememberScrollState()
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 6.dp
+    ) {
+        Column(
+            Modifier
+                .padding(16.dp)
+                .heightIn(max = 520.dp)
+                .verticalScroll(scroll)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("FlowAI 助手", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                TextButton(onClick = onClose) { Text("收起") }
+            }
+            PanelNote("助手不会读取屏幕内容；请把要分析的聊天粘贴到下面。")
+
+            val analyzed = result
+            if (analyzed == null) {
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it.take(20_000); error = null },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                    maxLines = 6,
+                    label = { Text("粘贴聊天内容（每行一条消息）") }
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        val t = clipboard.getText()?.text.orEmpty()
+                        if (t.isNotBlank()) { input = t.take(20_000); error = null }
+                        else error = "剪贴板里没有文字"
+                    }) { Text("粘贴剪贴板") }
+                    Button(
+                        onClick = {
+                            if (input.isBlank()) {
+                                error = "请先粘贴聊天内容"
+                            } else {
+                                val r = analyze(input)
+                                if (r == null) error = "分析失败，请检查内容" else result = r
+                            }
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) { Text("分析") }
+                }
+            } else {
+                Spacer(Modifier.height(6.dp))
+                ConversationSummary(analyzed)
+                Spacer(Modifier.height(12.dp))
+                Text("推荐下一步", style = MaterialTheme.typography.titleMedium)
+                analyzed.actions.forEachIndexed { i, a ->
+                    Card(
+                        onClick = {
+                            chosen = a
+                            executed = execute(analyzed, a)
+                            copied = null
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (chosen?.id == a.id) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.secondaryContainer
+                        )
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text("${i + 1}  ${a.title}", style = MaterialTheme.typography.titleSmall)
+                            Text(a.reason, style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+
+                val current = chosen
+                val done = executed?.takeIf { current != null && it.actionId == current.id }
+                if (current != null && done != null) {
+                    Spacer(Modifier.height(12.dp))
+                    if (done.replies.isNotEmpty()) {
+                        Text("候选回复 · 可复制后自行发送", style = MaterialTheme.typography.titleMedium)
+                        PanelNote(done.note)
+                        done.replies.forEach { reply ->
+                            Card(
+                                modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                            ) {
+                                Column(Modifier.padding(12.dp)) {
+                                    Text(reply.style, style = MaterialTheme.typography.titleSmall)
+                                    Text(reply.text, style = MaterialTheme.typography.bodyMedium)
+                                    TextButton(onClick = { onCopy(clipboard, reply.style, reply.text) { copied = it } }) {
+                                        Text("复制这条")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (done.objects.isNotEmpty()) {
+                        Spacer(Modifier.height(10.dp))
+                        Text("提取到的事项", style = MaterialTheme.typography.titleMedium)
+                        done.objects.forEach { Text("· ${describe(it)}", style = MaterialTheme.typography.bodyMedium) }
+                        TextButton(onClick = {
+                            onCopy(clipboard, "事项清单", done.objects.joinToString("\n") { describe(it) }) { copied = it }
+                        }) { Text("复制事项清单") }
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = {
+                        result = null; chosen = null; executed = null; copied = null
+                    }) { Text("换一段") }
+                    OutlinedButton(onClick = {
+                        onCopy(clipboard, "状态与建议", summarize(analyzed)) { copied = it }
+                    }) { Text("复制结果") }
+                }
+            }
+
+            error?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+            }
+            copied?.let {
+                Spacer(Modifier.height(6.dp))
+                Text("已复制：$it", color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+            }
+
+            Spacer(Modifier.height(10.dp))
+            TextButton(onClick = onOpenApp, modifier = Modifier.fillMaxWidth()) { Text("在完整界面中打开") }
+        }
+    }
+}
+
+@Composable
+private fun ConversationSummary(result: AnalysisResult) {
+    val s = result.state
+    Text(s.topic, style = MaterialTheme.typography.titleLarge)
+    Spacer(Modifier.height(6.dp))
+    Text("当前沟通状态 · ${stageLabel(s.stage)}", style = MaterialTheme.typography.titleSmall)
+    s.participantGoals.forEach { Text("· $it", style = MaterialTheme.typography.bodyMedium) }
+    if (s.unresolvedIssues.isNotEmpty()) {
+        Spacer(Modifier.height(8.dp))
+        Text("未解决", style = MaterialTheme.typography.titleSmall)
+        s.unresolvedIssues.forEach { Text("· $it", style = MaterialTheme.typography.bodyMedium) }
+    }
+    if (s.communicationSignals.isNotEmpty()) {
+        Spacer(Modifier.height(8.dp))
+        Text("沟通信号", style = MaterialTheme.typography.titleSmall)
+        s.communicationSignals.forEach { Text("· $it", style = MaterialTheme.typography.bodySmall) }
+    }
+}
+
+private fun onCopy(
+    clipboard: androidx.compose.ui.platform.ClipboardManager,
+    label: String,
+    text: String,
+    onDone: (String) -> Unit
+) {
+    clipboard.setText(AnnotatedString(text))
+    onDone(label)
+}
+
+private fun summarize(result: AnalysisResult): String = buildString {
+    appendLine(result.state.topic)
+    result.state.participantGoals.forEach { appendLine("· $it") }
+    result.state.unresolvedIssues.forEach { appendLine("未解决：$it") }
+    result.actions.forEachIndexed { i, a -> appendLine("${i + 1}. ${a.title}") }
+}.trim()
+
+private fun describe(obj: ActionObject): String = when (obj) {
+    is ActionObject.Task -> "任务：${obj.title}｜负责人：${obj.assignee ?: "待确认"}｜截止：${obj.deadline ?: "待确认"}"
+    is ActionObject.Event -> "事件：${obj.title}｜${obj.time ?: "待确认"}｜${obj.location ?: "待确认"}"
+    is ActionObject.Decision -> "决定：${obj.content}"
+}
+
+@Composable
+private fun PanelNote(text: String) {
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(12.dp)) {
+        Text(text, Modifier.fillMaxWidth().padding(10.dp), style = MaterialTheme.typography.bodySmall)
+    }
+}
+
+private fun stageLabel(s: ConversationStage) = when (s) {
+    ConversationStage.OPENING -> "开场"
+    ConversationStage.DISCUSSION -> "讨论"
+    ConversationStage.NEGOTIATION -> "协商"
+    ConversationStage.DECISION -> "安排 / 决策"
+    ConversationStage.FOLLOW_UP -> "跟进"
+    ConversationStage.CLOSING -> "收尾"
+    ConversationStage.UNKNOWN -> "待确认"
+}

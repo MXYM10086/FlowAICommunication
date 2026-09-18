@@ -5,10 +5,10 @@
     <!-- Shown in the text-selection toolbar when text is selected in another app. -->
     <string name="process_text_label">用 FlowAI 分析</string>
     <!-- Floating assistant (V2 entry point). -->
+    <string name="floating_notification_title">FlowAI 助手已就绪</string>
+    <string name="floating_notification_text">点悬浮球可就地打开助手面板；助手不会读取屏幕内容</string>
     <string name="floating_channel_name">悬浮入口</string>
     <string name="floating_channel_desc">在其他应用上方显示 FlowAI 悬浮球</string>
-    <string name="floating_notification_title">FlowAI 悬浮球已开启</string>
-    <string name="floating_notification_text">点击可随时打开 FlowAI；悬浮球只作为入口，不会自动读取任何内容</string>
     <!-- Screenshot capture (V2). -->
     <string name="capture_channel_name">截屏识别</string>
     <string name="capture_channel_desc">正在截取屏幕以识别聊天内容</string>

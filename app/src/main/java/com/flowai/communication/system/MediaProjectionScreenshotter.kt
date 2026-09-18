@@ -115,7 +115,42 @@ class MediaProjectionScreenshotter(
 
         val cropped = Bitmap.createBitmap(full, clamped.left, clamped.top, clamped.width, clamped.height)
         if (cropped != full) full.recycle()
+        logFrameStats(cropped)
         return cropped
+    }
+
+    /**
+     * Records basic statistics of the captured frame.
+     *
+     * A frame that came back black is the signature of a `FLAG_SECURE` window, and it is otherwise
+     * indistinguishable from "OCR found nothing" — which would send debugging in the wrong
+     * direction entirely.
+     */
+    private fun logFrameStats(bitmap: Bitmap) {
+        val step = 32
+        var samples = 0
+        var nonBlack = 0
+        var sum = 0L
+        var y = 0
+        while (y < bitmap.height) {
+            var x = 0
+            while (x < bitmap.width) {
+                val p = bitmap.getPixel(x, y)
+                val lum = ((p shr 16 and 0xFF) + (p shr 8 and 0xFF) + (p and 0xFF)) / 3
+                sum += lum
+                if (lum > BLACK_THRESHOLD) nonBlack++
+                samples++
+                x += step
+            }
+            y += step
+        }
+        val avg = if (samples == 0) 0 else (sum / samples)
+        Log.i(
+            TAG,
+            "frame ${bitmap.width}x${bitmap.height} avgLuma=$avg " +
+                "nonBlackSamples=$nonBlack/$samples " +
+                (if (nonBlack == 0) "=> ALL BLACK (FLAG_SECURE or empty frame)" else "")
+        )
     }
 
     private fun resize(targetWidth: Int, targetHeight: Int) {
@@ -160,5 +195,8 @@ class MediaProjectionScreenshotter(
 
     private companion object {
         const val TAG = "FlowAI"
+
+        /** Below this average luminance a pixel is treated as black. */
+        const val BLACK_THRESHOLD = 8
     }
 }

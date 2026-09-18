@@ -35,6 +35,7 @@ import com.flowai.communication.data.model.SourceType
 import com.flowai.communication.domain.CaptureRegion
 import com.flowai.communication.domain.PrefsConsumedShareStore
 import com.flowai.communication.domain.SharedText
+import com.flowai.communication.system.FloatingAssistantService
 import com.flowai.communication.system.RegionPickerActivity
 import com.flowai.communication.system.ScreenCaptureService
 import com.flowai.communication.ui.*
@@ -42,6 +43,9 @@ import com.flowai.communication.ui.home.*
 import com.flowai.communication.ui.analysis.AnalysisScreen
 import com.flowai.communication.ui.action.ActionScreen
 import com.flowai.communication.ui.components.FlowTheme
+
+/** Extra that opens the assistant panel directly; used for testing and from the home screen. */
+private const val EXTRA_SHOW_ASSISTANT = "show_assistant"
 
 /** adb logcat -s FlowAI */
 private const val TAG = "FlowAI"
@@ -192,6 +196,12 @@ class MainActivity : ComponentActivity() {
         // ViewModel still survives configuration changes through non-config retention.
         super.onCreate(null)
         consumeSharedText(intent)
+        // Lets the assistant panel be opened directly (adb: --ez show_assistant true). Useful on
+        // devices where injected touches cannot reach an overlay window, so the bubble itself
+        // cannot be driven from a test harness.
+        if (intent?.getBooleanExtra(EXTRA_SHOW_ASSISTANT, false) == true) {
+            FloatingAssistantService.openPanel(applicationContext)
+        }
         // The external entry points outlive any single ViewModel, so they get a
         // process-surviving "already consumed" store. Without it, an intent re-delivered after
         // process death would silently re-import chat text the user had already ended the

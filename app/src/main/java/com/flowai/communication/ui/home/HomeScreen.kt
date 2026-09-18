@@ -99,6 +99,12 @@ import com.flowai.communication.ui.components.*
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text(if (running) "关闭悬浮球" else "开启悬浮球") }
+                Spacer(Modifier.height(6.dp))
+                // Same panel the bubble opens, reachable without the overlay.
+                OutlinedButton(
+                    onClick = { FloatingAssistantService.openPanel(context) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("打开助手面板") }
             }
         }
         item {
