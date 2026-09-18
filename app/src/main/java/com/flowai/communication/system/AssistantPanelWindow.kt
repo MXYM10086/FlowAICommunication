@@ -66,12 +66,49 @@ class AssistantPanelWindow(
 
     private var params: WindowManager.LayoutParams? = null
 
+    /** Kept so a suspended panel can be re-attached with its state intact. */
+    private var rootView: android.view.View? = null
+
+    /** True while the panel is off screen but still alive. */
+    private var suspended = false
+
     /** Set by a capture that is in flight / has returned, and read by the panel. */
     private val capturedText = mutableStateOf<String?>(null)
     private val captureFailure = mutableStateOf<String?>(null)
 
     /** Text the panel should open with next time it is shown (e.g. after a capture). */
     private var pendingInitialText: String? = null
+
+    /**
+     * Takes the panel off screen but keeps its object, Compose state and lifecycle intact.
+     *
+     * Used around a capture: the panel must not appear in the frame, but tearing it down and
+     * rebuilding it means the consent dialogs happen while the panel's state has nowhere to live,
+     * and the text the user was working with is lost. Suspending only detaches the view.
+     */
+    fun suspendPanel() {
+        val current = view ?: return
+        runCatching { windowManager.removeView(current) }
+            .onFailure { e -> Log.e(TAG, "removeView failed", e) }
+        view = null
+        suspended = true
+        Log.i(TAG, "assistant panel suspended")
+    }
+
+    /** Re-attaches a suspended panel, preserving its state. */
+    fun resumePanel() {
+        if (!suspended) return
+        suspended = false
+        val root = rootView ?: return
+        val lp = params ?: return
+        runCatching { windowManager.addView(root, lp) }
+            .onFailure {
+                Log.e(TAG, "could not re-add assistant panel", it)
+                return
+            }
+        view = root
+        Log.i(TAG, "assistant panel resumed")
+    }
 
     fun show(initialText: String? = null) {
         if (view != null) return
@@ -122,6 +159,7 @@ class AssistantPanelWindow(
                 return
             }
         view = root
+        rootView = root
         params = layoutParams
         Log.i(TAG, "assistant panel shown")
     }
@@ -133,6 +171,8 @@ class AssistantPanelWindow(
         }
         view = null
         params = null
+        rootView = null
+        suspended = false
     }
 
     fun destroy() {
@@ -173,19 +213,21 @@ class AssistantPanelWindow(
      * the panel to stay on screen inside the capture.
      */
     fun beginCapture() {
-        hide()
+        // Only detach the view: the object (and the user's typed text) must survive the consent
+        // dialogs, which can outlive the panel's window by a long way.
+        suspendPanel()
         captureFailure.value = null
         onStartCapture?.invoke()
     }
 
     /** Called when a capture returns, so the panel can be shown again with the text in place. */
     fun deliverCapture(text: String?, failure: String?) {
-        Log.i(TAG, "panel deliverCapture: chars=${text?.length ?: 0}")
+        Log.i(TAG, "panel deliverCapture: chars=${text?.length ?: 0} suspended=$suspended")
         capturedText.value = text
         captureFailure.value = failure
         pendingInitialText = text
-        show()
-        Log.i(TAG, "panel re-shown: visible=${view != null}")
+        if (suspended) resumePanel() else show()
+        Log.i(TAG, "panel visible after capture: ${view != null}")
     }
 
     /** Escape hatch: the panel is a summary, the full app has everything. */

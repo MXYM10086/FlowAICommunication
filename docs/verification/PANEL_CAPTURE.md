@@ -32,23 +32,33 @@
 
 2. **回传结果无人接收（`onCreate` vs `onNewIntent`）。** `MainActivity` 是 `singleTask` 且通常已在任务栈中，因此 `CaptureForPanelActivity` 返回时的 `FLAG_ACTIVITY_SINGLE_TOP` 启动触发的是 **`onNewIntent`**，而回传逻辑只写在 `onCreate`。已抽出 `handleAssistantIntents()` 并在两处调用。修复后回传日志完整出现。
 
-## 剩余问题：面板在截屏返回后不重新显示
+## 剩余问题：面板在截屏返回后不重新显示 —— 已修复
 
-**根因（日志证实）**：进程在回传之后被系统杀死。
+**根因**：面板在截屏前被 `hide()` **销毁并置空**（`view = null`），返回时走 `show()` **重建** ComposeView 与整个 lifecycle。而这段时间里要经过授权弹窗与授权页 —— 面板的状态（用户输入的文字、lifecycle 对象）在重建前无处安放，实测还伴随进程被系统静默回收：
 
 ```
-18:05:19.669  21106  panel deliverCapture: chars=249      ← 面板已重新挂载
+18:05:19.669  21106  panel deliverCapture: chars=249      ← 已重建
 18:05:21.236  21265  floating assistant starting          ← 新进程，21106 已死
 ```
 
-面板是 `WindowManager` 覆盖窗口，**随进程一起消失**。新服务实例没有面板状态，因此界面上看不到面板（前台退回桌面）。logcat 中**没有 ANR 或 lowmemorykiller 记录**，属于系统静默回收。
+**修复：截屏期间只挂起，不销毁。**
 
-**影响**：OCR 与数据链路完全正常（249 字符已识别并回传），只是"结果呈现"这一步在进程被杀时丢失。
+- 新增 `suspendPanel()` / `resumePanel()`：只把根视图从 `WindowManager` 摘下 / 重新挂上，**保留对象、Compose 状态与 lifecycle**。
+- `beginCapture()` 改为 `suspendPanel()`（原为 `hide()`）；`deliverCapture()` 在有挂起时 `resumePanel()`，否则才 `show()`。
+- `hide()` 仍用于真正的关闭（收起按钮、点外部、打开完整界面），会一并清空 `rootView` 与挂起标志。
 
-**可能的修法（未实施）**：
-- 让服务在 `onCreate` 时检查是否存在待呈现的捕获结果（需要一个进程外的小存储），若有则自动重开面板；
-- 或在回传后**先**把面板显示出来、再让捕获 Activity 结束，缩短服务处于后台的时间窗；
-- 或把面板改为**常驻**（捕获期间不销毁，只临时移除视图），避免跨进程状态丢失。
+**修复后实测（模拟器）**：
+
+```
+assistant panel suspended                    ← 截屏前只挂起（覆盖窗口 2 → 1）
+panel capture: active=true chars=251
+panel deliverCapture: chars=251 suspended=true
+assistant panel resumed                      ← 恢复，同一进程 21677
+panel visible after capture: true
+capture released → capture session released
+```
+
+截图 `54-panel-capture-restored.png` 可见：面板恢复后**输入框里已填入识别出的文字**，Compose 状态完整保留。全程同一进程，未再出现进程回收。
 
 ## 已知边界
 
