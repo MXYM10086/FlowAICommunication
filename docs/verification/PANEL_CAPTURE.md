@@ -2,6 +2,30 @@
 
 日期：2026-09-19。为助手面板增加"截屏分析"入口：在面板里点一下 → 框选聊天区域 → 识别 → 结果回到面板。
 
+## 真机验证结果（Redmi / Android 16 / HyperOS，0.7.0）
+
+用户人工操作，日志全程同一进程（`27469`），**连续 3 次全部成功**：
+
+```text
+02:16:35.538  assistant panel suspended              ← 面板挂起
+02:16:36.702  panel capture region: full screen
+02:16:41.169  capture ready: 1440x3006 @ 560 dpi     ← 真机分辨率
+02:16:42.388  panel capture: active=true chars=83    ← OCR 成功
+02:16:42.432  panel deliverCapture: chars=83 suspended=true
+02:16:42.484  assistant panel resumed                ← 面板恢复
+02:16:42.484  panel visible after capture: true      ← ✅ 重现成功
+```
+
+| 次数 | 识别字符数 | 面板恢复 |
+| --- | --- | --- |
+| 1 | 83 | ✅ |
+| 2 | 163 | ✅ |
+| 3 | 173 | ✅ |
+
+**关键结论**：上一轮那个"进程被系统回收、面板随窗口消失"的问题**未再出现**，证明"只挂起不销毁"的修法与根因对应。
+
+同时真机确认：**点击面板外部可正常收起面板**（此前只声明 `FLAG_WATCH_OUTSIDE_TOUCH` 而未处理 `ACTION_OUTSIDE`，是缺陷）。
+
 ## 流程
 
 ```
