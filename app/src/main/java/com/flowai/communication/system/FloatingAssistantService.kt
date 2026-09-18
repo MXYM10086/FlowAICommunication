@@ -123,9 +123,33 @@ class FloatingAssistantService : Service() {
             existing.destroy()
             return
         }
-        val window = AssistantPanelWindow(this) { panel = null }
+        val window = AssistantPanelWindow(
+            context = this,
+            onClose = { panel = null },
+            onStartCapture = {
+                // The panel has already hidden itself so it will not appear in the frame.
+                runCatching {
+                    startActivity(CaptureForPanelActivity.intent(this).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }.onFailure { Log.w(TAG, "could not start panel capture", it) }
+            }
+        )
         panel = window
         window.show()
+    }
+
+    /** Called when a capture started from the panel returns. */
+    fun deliverCapture(text: String?, failure: String?) {
+        Log.i(TAG, "deliverCapture: chars=${text?.length ?: 0} panelOpen=${panel != null}")
+        val current = panel ?: AssistantPanelWindow(
+            context = this,
+            onClose = { panel = null },
+            onStartCapture = {
+                runCatching {
+                    startActivity(CaptureForPanelActivity.intent(this).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                }.onFailure { Log.w(TAG, "could not start panel capture", it) }
+            }
+        ).also { panel = it }
+        current.deliverCapture(text, failure)
     }
 
     /** Escape hatch kept for the panel's "open full app" action. */
@@ -206,6 +230,13 @@ class FloatingAssistantService : Service() {
                 return true
             }
             return start(context, thenOpenPanel = true)
+        }
+
+        /** Routes a capture result to the live panel. No-op when no panel is open. */
+        fun deliverCapture(text: String?, failure: String?): Boolean {
+            val current = instance ?: return false
+            current.deliverCapture(text, failure)
+            return true
         }
 
         /** Starts the bubble. No-op (returns false) when the overlay permission is missing. */

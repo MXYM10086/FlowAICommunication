@@ -8,6 +8,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.WindowManager
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.ComposeView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -42,7 +43,9 @@ import com.flowai.communication.ui.panel.ExecutedAction
  */
 class AssistantPanelWindow(
     private val context: Context,
-    private val onClose: () -> Unit
+    private val onClose: () -> Unit,
+    /** Invoked when the user asks for a capture; the host starts the capture activity. */
+    private val onStartCapture: (() -> Unit)? = null
 ) : LifecycleOwner, ViewModelStoreOwner, SavedStateRegistryOwner {
 
     private val lifecycleRegistry = LifecycleRegistry(this)
@@ -61,8 +64,16 @@ class AssistantPanelWindow(
 
     private var params: WindowManager.LayoutParams? = null
 
+    /** Set by a capture that is in flight / has returned, and read by the panel. */
+    private val capturedText = mutableStateOf<String?>(null)
+    private val captureFailure = mutableStateOf<String?>(null)
+
+    /** Text the panel should open with next time it is shown (e.g. after a capture). */
+    private var pendingInitialText: String? = null
+
     fun show(initialText: String? = null) {
         if (view != null) return
+        val seed = initialText ?: pendingInitialText
         savedStateController.performRestore(null)
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
         lifecycleRegistry.currentState = Lifecycle.State.RESUMED
@@ -71,7 +82,7 @@ class AssistantPanelWindow(
             setViewTreeLifecycleOwner(this@AssistantPanelWindow)
             setViewTreeViewModelStoreOwner(this@AssistantPanelWindow)
             setViewTreeSavedStateRegistryOwner(this@AssistantPanelWindow)
-            setContent { FlowTheme { PanelContent(initialText) } }
+            setContent { FlowTheme { PanelContent(seed) } }
         }
 
         val layoutParams = WindowManager.LayoutParams(
@@ -100,10 +111,12 @@ class AssistantPanelWindow(
     }
 
     fun hide() {
-        view?.let { runCatching { windowManager.removeView(it) } }
+        view?.let {
+            runCatching { windowManager.removeView(it) }
+                .onFailure { e -> Log.e(TAG, "removeView failed", e) }
+        }
         view = null
         params = null
-        Log.i(TAG, "assistant panel hidden")
     }
 
     fun destroy() {
@@ -126,8 +139,37 @@ class AssistantPanelWindow(
                     .getOrNull()
             },
             onClose = { destroy() },
-            onOpenApp = { openFullApp() }
+            onOpenApp = { openFullApp() },
+            // Must go through beginCapture so the panel hides itself before the frame is taken.
+            onCapture = { beginCapture() },
+            capturedText = capturedText.value,
+            captureFailure = captureFailure.value
         )
+    }
+
+    /**
+     * Hides the panel and asks for a capture.
+     *
+     * The panel must be hidden first: it is an overlay window, so it would otherwise appear in the
+     * captured frame and be recognised as chat text.
+     *
+     * The panel's button calls this, not [onStartCapture] directly — wiring the raw callback caused
+     * the panel to stay on screen inside the capture.
+     */
+    fun beginCapture() {
+        hide()
+        captureFailure.value = null
+        onStartCapture?.invoke()
+    }
+
+    /** Called when a capture returns, so the panel can be shown again with the text in place. */
+    fun deliverCapture(text: String?, failure: String?) {
+        Log.i(TAG, "panel deliverCapture: chars=${text?.length ?: 0}")
+        capturedText.value = text
+        captureFailure.value = failure
+        pendingInitialText = text
+        show()
+        Log.i(TAG, "panel re-shown: visible=${view != null}")
     }
 
     /** Escape hatch: the panel is a summary, the full app has everything. */

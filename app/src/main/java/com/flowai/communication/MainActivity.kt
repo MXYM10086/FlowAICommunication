@@ -35,6 +35,7 @@ import com.flowai.communication.data.model.SourceType
 import com.flowai.communication.domain.CaptureRegion
 import com.flowai.communication.domain.PrefsConsumedShareStore
 import com.flowai.communication.domain.SharedText
+import com.flowai.communication.system.CaptureForPanelActivity
 import com.flowai.communication.system.FloatingAssistantService
 import com.flowai.communication.system.RegionPickerActivity
 import com.flowai.communication.system.ScreenCaptureService
@@ -196,12 +197,7 @@ class MainActivity : ComponentActivity() {
         // ViewModel still survives configuration changes through non-config retention.
         super.onCreate(null)
         consumeSharedText(intent)
-        // Lets the assistant panel be opened directly (adb: --ez show_assistant true). Useful on
-        // devices where injected touches cannot reach an overlay window, so the bubble itself
-        // cannot be driven from a test harness.
-        if (intent?.getBooleanExtra(EXTRA_SHOW_ASSISTANT, false) == true) {
-            FloatingAssistantService.openPanel(applicationContext)
-        }
+        handleAssistantIntents(intent)
         // The external entry points outlive any single ViewModel, so they get a
         // process-surviving "already consumed" store. Without it, an intent re-delivered after
         // process death would silently re-import chat text the user had already ended the
@@ -227,6 +223,9 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        // Now that the app is almost always already in its task, a return from a panel capture
+        // arrives here rather than in onCreate — so both paths must handle it.
+        handleAssistantIntents(intent)
         consumeSharedText(intent)
     }
 
@@ -235,6 +234,35 @@ class MainActivity : ComponentActivity() {
      * text-selection toolbar (`ACTION_PROCESS_TEXT`). The selection toolbar matters because chat
      * apps often do not expose a share action for a chosen message.
      */
+    /**
+     * Handles the intents that belong to the assistant panel.
+     *
+     * Called from both [onCreate] and [onNewIntent]: MainActivity is `singleTask` and usually
+     * already in its task, so a panel-capture return arrives as a new intent.
+     */
+    private fun handleAssistantIntents(incoming: Intent?) {
+        if (incoming == null) return
+        // Lets the assistant panel be opened directly (adb: --ez show_assistant true). Useful on
+        // devices where injected touches cannot reach an overlay window, so the bubble itself
+        // cannot be driven from a test harness.
+        if (incoming.getBooleanExtra(EXTRA_SHOW_ASSISTANT, false)) {
+            FloatingAssistantService.openPanel(applicationContext)
+            incoming.removeExtra(EXTRA_SHOW_ASSISTANT)
+        }
+        // A capture started from the panel returns here; hand it back so the recognised text lands
+        // in the panel's input box.
+        if (incoming.getBooleanExtra(CaptureForPanelActivity.EXTRA_FROM_PANEL, false)) {
+            val text = incoming.getStringExtra(CaptureForPanelActivity.EXTRA_CAPTURED_TEXT)
+            val failure = incoming.getStringExtra(CaptureForPanelActivity.EXTRA_FAILURE)
+            Log.i(TAG, "panel capture returned: chars=${text?.length ?: 0} failure=$failure")
+            FloatingAssistantService.deliverCapture(text, failure)
+            // Drop the extras so a task re-delivery does not replay the result.
+            incoming.removeExtra(CaptureForPanelActivity.EXTRA_CAPTURED_TEXT)
+            incoming.removeExtra(CaptureForPanelActivity.EXTRA_FAILURE)
+            incoming.removeExtra(CaptureForPanelActivity.EXTRA_FROM_PANEL)
+        }
+    }
+
     private fun consumeSharedText(intent: Intent?) {
         val action = intent?.action
         val mime = intent?.type

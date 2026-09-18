@@ -102,5 +102,15 @@
             android:launchMode="singleTop"
             android:excludeFromRecents="true"
             android:theme="@style/Theme.FlowAI.RegionPicker" />
+        <!--
+          Capture started from the assistant panel. Translucent so the app being captured stays
+          visible; the panel hides itself first so the overlay is not part of the frame.
+        -->
+        <activity
+            android:name=".system.CaptureForPanelActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.FlowAI.RegionPicker" />
     </application>
 </manifest>

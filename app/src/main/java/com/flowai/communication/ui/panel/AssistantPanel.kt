@@ -46,7 +46,16 @@ fun AssistantPanel(
     analyze: (String) -> AnalysisResult?,
     execute: (AnalysisResult, NextAction) -> ExecutedAction?,
     onClose: () -> Unit,
-    onOpenApp: () -> Unit
+    onOpenApp: () -> Unit,
+    /**
+     * Starts a screen capture. The panel is hidden by the caller first, so the overlay itself is
+     * not part of the captured frame; the text arrives later through [capturedText].
+     */
+    onCapture: (() -> Unit)? = null,
+    /** Text produced by a capture, delivered after the capture activity returns. */
+    capturedText: String? = null,
+    /** Failure reported by a capture, if any. */
+    captureFailure: String? = null
 ) {
     val clipboard = LocalClipboardManager.current
     var input by remember { mutableStateOf(initialText.orEmpty()) }
@@ -56,6 +65,17 @@ fun AssistantPanel(
     var error by remember { mutableStateOf<String?>(null) }
     var copied by remember { mutableStateOf<String?>(null) }
     val scroll = rememberScrollState()
+
+    // A capture fills the input box, replacing whatever was there.
+    LaunchedEffect(capturedText) {
+        if (!capturedText.isNullOrBlank()) {
+            input = capturedText.take(20_000)
+            result = null; chosen = null; executed = null; copied = null; error = null
+        }
+    }
+    LaunchedEffect(captureFailure) {
+        if (!captureFailure.isNullOrBlank()) error = captureFailure
+    }
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -87,6 +107,13 @@ fun AssistantPanel(
                     label = { Text("粘贴聊天内容（每行一条消息）") }
                 )
                 Spacer(Modifier.height(8.dp))
+                onCapture?.let { startCapture ->
+                    Button(
+                        onClick = startCapture,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("截屏分析（框选聊天区域）") }
+                    Spacer(Modifier.height(6.dp))
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = {
                         val t = clipboard.getText()?.text.orEmpty()
@@ -96,7 +123,7 @@ fun AssistantPanel(
                     Button(
                         onClick = {
                             if (input.isBlank()) {
-                                error = "请先粘贴聊天内容"
+                                error = "请先粘贴聊天内容或截屏"
                             } else {
                                 val r = analyze(input)
                                 if (r == null) error = "分析失败，请检查内容" else result = r
