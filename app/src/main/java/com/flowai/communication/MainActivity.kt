@@ -1,4 +1,4 @@
-package com.flowai.communication
+﻿package com.flowai.communication
 
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
@@ -9,6 +9,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -370,7 +371,9 @@ class MainActivity : ComponentActivity() {
             }
         }
     }) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
+        // The whole Scaffold lifts above the keyboard. Padding only the scrolling content left this
+        // bottom bar sitting on top of the IME, so the screen's own action stayed hidden behind it.
+        Box(Modifier.fillMaxSize().padding(padding).imePadding()) {
             when(vm.page) {
                 Page.HOME -> HomeScreen(
                     open = vm::openInput,
