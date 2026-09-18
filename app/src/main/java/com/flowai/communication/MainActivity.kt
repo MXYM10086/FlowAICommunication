@@ -78,18 +78,29 @@ class MainActivity : ComponentActivity() {
             ?.takeIf { it.itemCount > 0 }
             ?.getItemAt(0)
             ?.coerceToText(this)
+        // SEND_MULTIPLE carries a collection instead of a single EXTRA_TEXT. The extra's concrete
+        // type varies by sender, so read the raw value and normalise it.
+        @Suppress("DEPRECATION")
+        val textItems = SharedText.normalizeItems(intent?.extras?.get(Intent.EXTRA_TEXT))
         val resolved = SharedText.resolve(
             action = action,
             mimeType = mime,
             text = intent?.getCharSequenceExtra(Intent.EXTRA_TEXT),
             html = intent?.getCharSequenceExtra(Intent.EXTRA_HTML_TEXT),
             processed = intent?.getCharSequenceExtra(Intent.EXTRA_PROCESS_TEXT),
-            clipText = clipText
+            clipText = clipText,
+            textItems = textItems
         )
         if (resolved == null) {
             // Not one of our entry points at all (e.g. the launcher intent) — stay quiet.
             if (action != null && action != Intent.ACTION_MAIN) {
-                Log.i(TAG, "ignored intent: action=$action type=$mime extras=${intent.extras?.keySet()} clip=${intent.clipData?.itemCount}")
+                val rawText = intent.extras?.get(Intent.EXTRA_TEXT)
+                Log.i(
+                    TAG,
+                    "ignored intent: action=$action type=$mime " +
+                        "textClass=${rawText?.javaClass?.simpleName} " +
+                        "items=${textItems.size} extras=${intent.extras?.keySet()} clip=${intent.clipData?.itemCount}"
+                )
             }
             return
         }

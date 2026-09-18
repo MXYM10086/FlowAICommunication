@@ -31,6 +31,8 @@ Kotlin + Jetpack Compose Android 产品逻辑 MVP，包名 `com.flowai.communica
 
 以上路径已在 API 34 模拟器上自动跑通并逐步截图，详见 [验证记录](TEST_RESULTS.md)。旋转仅验证了配置变更中的状态保留，未验证横屏布局；分享仅验证了 `SEND` intent 接收，未经过真实微信 IPC 交接。空文本时"分析当前沟通"按钮为禁用状态，而非弹出错误。
 
+**真机验收**（Android 16 / Redmi，2026-09-19）见 [真机验收记录](docs/verification/DEVICE_ACCEPTANCE.md)：8 条路径中 7 条自动通过、旋转由人工确认；并记录了两处真机才暴露的问题（深色模式下保持亮色、2.0x 字体下顶栏标题换行）。
+
 ### 分享文本不会被重复导入
 
 进程被杀后任务被重建时，Android 会从任务记录里重新投递原始的 `SEND` intent（含 `EXTRA_TEXT`），因此聊天原文有可能被再次导入——这与"进程重建后不恢复内容"的约定冲突。实测确认：把 extra 从 `getIntent()` 上移除**不能**解决，因为任务记录仍保留原始 intent。

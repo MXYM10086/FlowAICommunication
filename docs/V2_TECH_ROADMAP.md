@@ -28,10 +28,25 @@
 
 ### 2. `ACTION_SEND` 加固（已实现）
 
-- 过滤器从 `text/plain` 放宽为 **`text/*`**：只声明 `text/plain` 时，发送方用 `text/html` 就匹配不到，应用不会出现在分享列表
-- 载荷解析顺序：`EXTRA_TEXT` → `EXTRA_HTML_TEXT` → `ClipData`
-- **`ClipData` 兜底是必需的**：`ShareCompat.IntentReader`（androidx 源码已核对）**完全不读 `ClipData`**，而有些发送方只把文本放在那里
-- **`ClipData` 只作兜底且要求内容可信**：命令行 intent 会在 `ClipData` 里留下组件名之类的短串（实测为 `-n`），曾导致 2 个字符的垃圾被当成聊天文本导入。现在仅在"extras 未产出可用文本"且"该串有不低于 4 个非空白字符"时才采用
+- 过滤器**尽可能放宽**，共 5 个声明：`SEND` 配 `*/*`、`text/*`、无 `<data>`（匹配 type=null）；`SEND_MULTIPLE` 配 `*/*`、无 `<data>`。
+  - **为什么放宽到 `*/*`**：只声明 `text/plain` 时，发送方用 `text/html` 就匹配不到，应用不会出现在分享列表。放宽只影响"是否出现在列表里"，代码层仍会拒绝非文本载荷。
+  - **无 `<data>` 的声明**：Android 的 intent filter 若无 `<data>` 则匹配**任意类型，包括 type 为 null**。有些发送方不调 `setType()`，`text/*` 过滤器根本匹配不到它们。
+- 载荷解析顺序：`EXTRA_TEXT` → `EXTRA_HTML_TEXT` → 多选项集合 → `ClipData`
+- **`ACTION_SEND_MULTIPLE` 是微信的必经之路**：微信只有**多选**消息后才有分享入口，而它发的是 `SEND_MULTIPLE`。只声明 `SEND` 的实现在微信里根本不会出现。
+- **`EXTRA_TEXT` 的形状不统一**：多选时可能是 `ArrayList<String>`（惯例）、`String[]`、或 `ArrayList<CharSequence>`。只读其中一种会让载荷静默消失 → 统一用 `normalizeItems` 归一化。
+- **`ClipData` 兜底是必需的**：`ShareCompat.IntentReader`（androidx 源码已核对）**完全不读 `ClipData`**，而有些发送方只把文本放在那里。
+- **`ClipData` 只作兜底且要求内容可信**：命令行 intent 会在 `ClipData` 里留下组件名之类的短串（实测为 `-n`），曾导致 2 个字符的垃圾被当成聊天文本导入。现在仅在"extras 未产出可用文本"且"该串有不低于 4 个非空白字符"时才采用。
+
+**与同类开源实现的对比**（据其 manifest 实际声明）：
+
+| 项目 | `SEND` | `SEND_MULTIPLE` | `PROCESS_TEXT` |
+| --- | --- | --- | --- |
+| 本项目 | ✅ `*/*`+`text/*`+无data | ✅ `*/*`+无data | ✅ `text/plain` |
+| [Markor](https://github.com/gsantner/markor) | ✅ `text/plain,text/*,*/*` | ❌ 未声明 | ✅ |
+| [AnkiDroid](https://github.com/ankidroid/Anki-Android) | ✅ `text/plain` | ❌ 未声明 | ✅ |
+| [overlay-translator（屏译）](https://github.com/ciddwd/overlay-translator) | ✅ `image/*` | ✅ `image/*` | ✅ `text/plain` |
+
+结论：`SEND` + `PROCESS_TEXT` 是同类项目的共识；**对文本同时声明 `SEND_MULTIPLE` 的项目很少见**，本项目的覆盖面比它们更宽。屏译虽是图片场景，但它对图片**同时声明了 `SEND` 与 `SEND_MULTIPLE`**，印证了"多选必须单独声明"这一判断。
 
 ### 仍未闭合：跨进程重建后重复导入
 

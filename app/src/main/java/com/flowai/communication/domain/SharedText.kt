@@ -20,6 +20,7 @@ package com.flowai.communication.domain
 object SharedText {
 
     const val ACTION_SEND = "android.intent.action.SEND"
+    const val ACTION_SEND_MULTIPLE = "android.intent.action.SEND_MULTIPLE"
     const val ACTION_PROCESS_TEXT = "android.intent.action.PROCESS_TEXT"
 
     /** Which system entry point delivered the payload. */
@@ -42,23 +43,41 @@ object SharedText {
      *
      * Returns null when the intent is not a text entry point or carries nothing usable.
      */
+    /**
+     * Normalises the `EXTRA_TEXT` value of a multi-item share into a list of strings.
+     *
+     * `ACTION_SEND_MULTIPLE` has no single textbook shape: the extra may arrive as an
+     * `ArrayList<String>` (the convention), a `String[]`, or an `ArrayList<CharSequence>`.
+     * A sender that uses a shape we do not read appears to "do nothing", so all three are accepted.
+     */
+    fun normalizeItems(raw: Any?): List<String> = when (raw) {
+        null -> emptyList()
+        is Array<*> -> raw.mapNotNull { it?.toString()?.takeIf { s -> s.isNotEmpty() } }
+        is Iterable<*> -> raw.mapNotNull { it?.toString()?.takeIf { s -> s.isNotEmpty() } }
+        else -> listOfNotNull(raw.toString().takeIf { it.isNotEmpty() })
+    }
+
     fun resolve(
         action: String?,
         mimeType: String?,
         text: CharSequence?,
         html: CharSequence?,
         processed: CharSequence?,
-        clipText: CharSequence? = null
+        clipText: CharSequence? = null,
+        textItems: List<CharSequence>? = null
     ): Incoming? {
         return when (action) {
-            ACTION_SEND -> {
-                // A non-text share (an image, a file) is not something this MVP can analyze.
-                if (mimeType != null && !mimeType.startsWith("text/")) return null
-                // ClipData is only consulted when the extras yielded nothing usable: some senders put
-                // the payload there and leave the extras null. When the extras are present but
-                // unusable the share is empty, and ClipData junk — the platform puts the component
-                // name there for command-line intents — must not be imported.
-                val body = extract(text, html)
+            ACTION_SEND, ACTION_SEND_MULTIPLE -> {
+                // Read the body BEFORE judging the MIME type. Deciding by type alone loses real
+                // payloads: WeChat shares multi-selected chat messages as `message/rfc822` while
+                // still putting the text in EXTRA_TEXT, so a `text/*` check rejects them.
+                // A share with no text extras (an image, a file) has nothing to analyze anyway and
+                // falls through to null below, so no separate type gate is needed.
+                val joined = textItems
+                    ?.mapNotNull { it.toString().takeIf { s -> s.isNotEmpty() } }
+                    ?.joinToString("\n")
+                    ?.takeIf { it.isNotEmpty() }
+                val body = extract(text, html) ?: extract(joined, null)
                 val fromClip = if (body == null && hasPlausibleContent(clipText)) extract(clipText, null) else null
                 (body ?: fromClip)?.let { Incoming(it, Entry.SHARE) }
             }

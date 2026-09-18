@@ -16,10 +16,40 @@
               EXTRA_HTML_TEXT or as text/html, which a text/plain-only filter never matches.
               text/* is the broadest filter the platform supports for the text family.
             -->
+            <!--
+              Share sheet entry. Advertised as broadly as possible because senders differ and some
+              (WeChat among them) would not surface the app under a narrower declaration:
+                1. */*         — matches any declared MIME type, including text/plain and text/html.
+                2. text/*      — kept explicitly for clarity/redundancy.
+                3. no <data>   — matches intents that never called setType() (type == null).
+                4. SEND_MULTIPLE — sharing several items; the payload is a String array.
+              Advertising broadly only affects visibility in the share sheet: SharedText.resolve
+              still rejects anything that carries no usable text, so non-text shares are ignored.
+            -->
+            <intent-filter android:label="@string/share_target_label">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
             <intent-filter android:label="@string/share_target_label">
                 <action android:name="android.intent.action.SEND" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="text/*" />
+            </intent-filter>
+            <intent-filter android:label="@string/share_target_label">
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data />
+            </intent-filter>
+            <intent-filter android:label="@string/share_target_label">
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="*/*" />
+            </intent-filter>
+            <intent-filter android:label="@string/share_target_label">
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data />
             </intent-filter>
             <!--
               Selection-toolbar entry (Android 6.0+): the user selects text in ANY app — including

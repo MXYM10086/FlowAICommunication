@@ -7,37 +7,39 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * Covers the "share from WeChat does nothing" defect. WeChat and other clients attach styled text
- * as EXTRA_HTML_TEXT or as text/html, which the previous text/plain-only handling dropped.
+ * Covers payload handling for the two external entry points:
+ *  - ACTION_SEND / ACTION_SEND_MULTIPLE (share sheet)
+ *  - ACTION_PROCESS_TEXT (selection toolbar)
+ *
+ * Shapes covered here were established from real senders, including a payload captured from a
+ * physical device where WeChat shares multi-selected messages as `message/rfc822`.
  */
 class SharedTextTest {
 
+    private val chat = "对方：这个东西今天能弄好吗？"
+    private val reply = "我：可能还差一点。"
+
+    // ---- plain text ----
+
     @Test fun plainTextIsUsedAsIs() {
-        assertEquals("对方：今天能弄好吗？", SharedText.extract("对方：今天能弄好吗？", null))
+        assertEquals(chat, SharedText.extract(chat, null))
     }
 
     @Test fun plainTextWinsOverHtmlWhenBothPresent() {
-        assertEquals(
-            "对方：今天能弄好吗？",
-            SharedText.extract("对方：今天能弄好吗？", "<b>对方：今天能弄好吗？</b>")
-        )
+        assertEquals(chat, SharedText.extract(chat, "<b>$chat</b>"))
     }
 
     @Test fun weChatStyleHtmlOnlyPayloadIsRecovered() {
-        // This is the shape that previously produced an empty input: EXTRA_TEXT absent, HTML present.
-        val html = "<p>对方：这个东西今天能弄好吗？</p><p>我：可能还差一点。</p>"
-        val out = SharedText.extract(null, html)
-        assertEquals("对方：这个东西今天能弄好吗？\n我：可能还差一点。", out)
+        val html = "<p>$chat</p><p>$reply</p>"
+        assertEquals("$chat\n$reply", SharedText.extract(null, html))
     }
 
     @Test fun htmlInTheTextExtraIsFlattened() {
-        val out = SharedText.extract("<div>老师：明天下午三点在 A203 开会</div>", null)
-        assertEquals("老师：明天下午三点在 A203 开会", out)
+        assertEquals(chat, SharedText.extract("<div>$chat</div>", null))
     }
 
     @Test fun brBecomesNewlineSoMessagesStayOnePerLine() {
-        val out = SharedText.extract(null, "对方：你好<br>我：你好")
-        assertEquals("对方：你好\n我：你好", out)
+        assertEquals("$chat\n$reply", SharedText.extract(null, "$chat<br>$reply"))
     }
 
     @Test fun entitiesAreDecoded() {
@@ -54,13 +56,11 @@ class SharedTextTest {
     }
 
     @Test fun scriptAndStyleContentIsDropped() {
-        val out = SharedText.extract(null, "<style>p{color:red}</style><p>正文</p><script>alert(1)</script>")
-        assertEquals("正文", out)
+        assertEquals("正文", SharedText.extract(null, "<style>p{color:red}</style><p>正文</p><script>alert(1)</script>"))
     }
 
     @Test fun linkMarkupKeepsItsVisibleText() {
-        val out = SharedText.extract(null, "<a href=\"https://x.test\">查看详情</a>")
-        assertEquals("查看详情", out)
+        assertEquals("查看详情", SharedText.extract(null, "<a href=\"https://x.test\">查看详情</a>"))
     }
 
     @Test fun blankAndEmptyPayloadsYieldNull() {
@@ -73,51 +73,43 @@ class SharedTextTest {
         assertNull(SharedText.extract(null, "<p></p><br/>"))
     }
 
-    @Test fun markupDetectionDoesNotMangleTextThatMerelyContainsAngleBrackets() {
-        // A chat line like "a < b > c" is not markup and must survive untouched.
+    @Test fun markupDetectionDoesNotMangleTextWithAngleBrackets() {
         val raw = "我：如果 a < b > c 就不行"
         assertEquals(raw, SharedText.extract(raw, null))
     }
 
     @Test fun multiLineChatSurvivesRoundTrip() {
-        val chat = "老师：明天下午三点在 A203 开会，小王准备 PPT。\n我：收到。"
-        assertEquals(chat, SharedText.extract(chat, null))
+        val body = "$chat\n$reply"
+        assertEquals(body, SharedText.extract(body, null))
     }
 
     @Test fun extractedHtmlKeepsSpeakerLabelsParseable() {
-        // The parsed result must still satisfy the speaker-label convention the engine relies on.
         val out = SharedText.extract(null, "<p>小王：数据我今晚发</p>")
         assertTrue(out!!.startsWith("小王："))
     }
 
-    // ---- action resolution: which entry point delivered the payload ----
+    // ---- action resolution ----
 
     @Test fun sendActionResolvesToShareEntry() {
-        val r = SharedText.resolve(SharedText.ACTION_SEND, "text/plain", "对方：在吗", null, null)
+        val r = SharedText.resolve(SharedText.ACTION_SEND, "text/plain", chat, null, null)
         assertEquals(SharedText.Entry.SHARE, r?.entry)
-        assertEquals("对方：在吗", r?.text)
+        assertEquals(chat, r?.text)
     }
 
     @Test fun sendWithHtmlTypeStillResolves() {
-        val r = SharedText.resolve(SharedText.ACTION_SEND, "text/html", null, "<p>对方：在吗</p>", null)
+        val r = SharedText.resolve(SharedText.ACTION_SEND, "text/html", null, "<p>$chat</p>", null)
         assertEquals(SharedText.Entry.SHARE, r?.entry)
-        assertEquals("对方：在吗", r?.text)
-    }
-
-    @Test fun nonTextShareIsRejected() {
-        assertNull(SharedText.resolve(SharedText.ACTION_SEND, "image/png", "t", "<p>h</p>", null))
+        assertEquals(chat, r?.text)
     }
 
     @Test fun processTextActionResolvesToProcessTextEntry() {
-        // The selection toolbar delivers the user's selection in EXTRA_PROCESS_TEXT.
-        val r = SharedText.resolve(SharedText.ACTION_PROCESS_TEXT, "text/plain", null, null, "对方：这个东西今天能弄好吗？")
+        val r = SharedText.resolve(SharedText.ACTION_PROCESS_TEXT, "text/plain", null, null, chat)
         assertEquals(SharedText.Entry.PROCESS_TEXT, r?.entry)
-        assertEquals("对方：这个东西今天能弄好吗？", r?.text)
+        assertEquals(chat, r?.text)
     }
 
     @Test fun processTextIgnoresSendExtras() {
-        // A PROCESS_TEXT intent must not fall back to share extras; only the selection counts.
-        assertNull(SharedText.resolve(SharedText.ACTION_PROCESS_TEXT, "text/plain", "对方：在吗", null, null))
+        assertNull(SharedText.resolve(SharedText.ACTION_PROCESS_TEXT, "text/plain", chat, null, null))
     }
 
     @Test fun processTextWithBlankSelectionIsRejected() {
@@ -126,23 +118,54 @@ class SharedTextTest {
 
     @Test fun unrelatedActionsAreIgnored() {
         assertNull(SharedText.resolve("android.intent.action.MAIN", null, null, null, null))
-        assertNull(SharedText.resolve(null, null, "对方：在吗", null, null))
+        assertNull(SharedText.resolve(null, null, chat, null, null))
     }
 
     @Test fun processTextKeepsMultiLineSelectionIntact() {
-        val chat = "对方：明天下午三点开会\n我：收到"
-        val r = SharedText.resolve(SharedText.ACTION_PROCESS_TEXT, "text/plain", null, null, chat)
+        val body = "$chat\n$reply"
+        val r = SharedText.resolve(SharedText.ACTION_PROCESS_TEXT, "text/plain", null, null, body)
+        assertEquals(body, r?.text)
+    }
+
+    // ---- WeChat's real payload shape, captured from a device ----
+
+    @Test fun weChatMultiSelectShareIsAccepted() {
+        // Real device capture: WeChat sends multi-selected chat messages as
+        //   action=SEND_MULTIPLE, type=message/rfc822, EXTRA_TEXT=<the messages>
+        // A text/* MIME gate rejected this, so the share silently did nothing.
+        val body = "$chat\n$reply"
+        val r = SharedText.resolve(SharedText.ACTION_SEND_MULTIPLE, "message/rfc822", body, null, null)
+        assertEquals(SharedText.Entry.SHARE, r?.entry)
+        assertEquals(body, r?.text)
+    }
+
+    @Test fun messageRfc822IsAcceptedForSingleSendToo() {
+        val r = SharedText.resolve(SharedText.ACTION_SEND, "message/rfc822", chat, null, null)
         assertEquals(chat, r?.text)
     }
 
-    // ---- ClipData fallback: some senders leave the extras null entirely ----
+    @Test fun nonTextMimeWithRealTextIsAccepted() {
+        // The gate is "does it carry text", not "is the MIME in a list".
+        for (mime in listOf("message/rfc822", "application/octet-stream", "multipart/mixed", null)) {
+            val r = SharedText.resolve(SharedText.ACTION_SEND, mime, chat, null, null)
+            assertEquals("text should be accepted for $mime", chat, r?.text)
+        }
+    }
+
+    @Test fun shareWithoutTextExtrasIsRejected() {
+        // An image/file share has nothing to analyze.
+        assertNull(SharedText.resolve(SharedText.ACTION_SEND, "image/png", null, null, null, null))
+        assertNull(SharedText.resolve(SharedText.ACTION_SEND_MULTIPLE, "image/*", null, null, null, null))
+    }
+
+    // ---- ClipData fallback ----
 
     @Test fun clipDataIsUsedWhenShareHasNoExtras() {
-        // Verified against androidx ShareCompat.IntentReader source: it never reads ClipData, so a
-        // ClipData-only share would otherwise be silently dropped.
-        val r = SharedText.resolve(SharedText.ACTION_SEND, "text/plain", null, null, null, "对方：在吗")
+        // androidx ShareCompat.IntentReader never reads ClipData, so a ClipData-only share would
+        // otherwise be silently dropped.
+        val r = SharedText.resolve(SharedText.ACTION_SEND, "text/plain", null, null, null, chat)
         assertEquals(SharedText.Entry.SHARE, r?.entry)
-        assertEquals("对方：在吗", r?.text)
+        assertEquals(chat, r?.text)
     }
 
     @Test fun extrasWinOverClipDataWhenBothPresent() {
@@ -151,7 +174,7 @@ class SharedTextTest {
     }
 
     @Test fun blankTextExtrasAreNotBackfilledFromClipData() {
-        // Regression, confirmed on device: with no guard, a blank EXTRA_TEXT made the ClipData
+        // Regression, confirmed on device: without a guard, a blank EXTRA_TEXT let the ClipData
         // fallback import the platform's component-name artifact ("-n") as chat text.
         assertNull(SharedText.resolve(SharedText.ACTION_SEND, "text/plain", " ", null, null, "-n"))
         assertNull(SharedText.resolve(SharedText.ACTION_SEND, "text/plain", "", null, null, "-n"))
@@ -159,27 +182,75 @@ class SharedTextTest {
     }
 
     @Test fun shortJunkInClipDataIsNotImported() {
-        // The ClipData channel is a fallback, so it must carry plausible content to be trusted.
         assertNull(SharedText.resolve(SharedText.ACTION_SEND, "text/plain", null, null, null, "-n"))
     }
 
-    @Test fun realChatTextInClipDataIsStillImported() {
-        val r = SharedText.resolve(SharedText.ACTION_SEND, "text/plain", null, null, null, "对方：在吗")
-        assertEquals(SharedText.Entry.SHARE, r?.entry)
-        assertEquals("对方：在吗", r?.text)
-    }
-
-    @Test fun clipDataFallbackAlsoAppliesToProcessText() {
+    @Test fun clipDataFallbackAppliesToProcessText() {
         val r = SharedText.resolve(SharedText.ACTION_PROCESS_TEXT, "text/plain", null, null, null, "对方：划词")
         assertEquals(SharedText.Entry.PROCESS_TEXT, r?.entry)
         assertEquals("对方：划词", r?.text)
     }
 
-    @Test fun blankProcessTextSelectionIsNotBackfilledFromClipData() {
-        assertNull(SharedText.resolve(SharedText.ACTION_PROCESS_TEXT, "text/plain", null, null, "  ", "-n"))
+    // ---- EXTRA_TEXT shape normalisation ----
+
+    @Test fun normalizeItemsAcceptsArrayList() {
+        assertEquals(listOf("a", "b"), SharedText.normalizeItems(arrayListOf("a", "b")))
     }
 
-    @Test fun nonTextShareIsRejectedEvenWithClipDataText() {
-        assertNull(SharedText.resolve(SharedText.ACTION_SEND, "image/png", null, null, null, "not chat text"))
+    @Test fun normalizeItemsAcceptsPlainArray() {
+        assertEquals(listOf("a", "b"), SharedText.normalizeItems(arrayOf("a", "b")))
+    }
+
+    @Test fun normalizeItemsAcceptsCharSequenceArrayList() {
+        val items = ArrayList<CharSequence>().apply { add("a"); add("b") }
+        assertEquals(listOf("a", "b"), SharedText.normalizeItems(items))
+    }
+
+    @Test fun normalizeItemsHandlesSingleStringAndNull() {
+        assertEquals(listOf("only"), SharedText.normalizeItems("only"))
+        assertEquals(emptyList<String>(), SharedText.normalizeItems(null))
+        assertEquals(emptyList<String>(), SharedText.normalizeItems(arrayOf<String>()))
+    }
+
+    @Test fun normalizeItemsSkipsEmptyEntries() {
+        assertEquals(listOf("a", "b"), SharedText.normalizeItems(arrayListOf("a", "", "b")))
+    }
+
+    @Test fun sendMultipleJoinsItemsIntoOneChatBody() {
+        val r = SharedText.resolve(
+            SharedText.ACTION_SEND_MULTIPLE, "text/plain", null, null, null, null,
+            listOf(chat, reply)
+        )
+        assertEquals(SharedText.Entry.SHARE, r?.entry)
+        assertEquals("$chat\n$reply", r?.text)
+    }
+
+    @Test fun sendMultipleWithNoMimeTypeIsAccepted() {
+        val r = SharedText.resolve(
+            SharedText.ACTION_SEND_MULTIPLE, null, null, null, null, null,
+            listOf("对方：在吗", "我：在")
+        )
+        assertEquals("对方：在吗\n我：在", r?.text)
+    }
+
+    @Test fun emptySendMultipleItemsYieldNull() {
+        assertNull(SharedText.resolve(SharedText.ACTION_SEND_MULTIPLE, "text/plain", null, null, null, null, emptyList()))
+    }
+
+    @Test fun shareWithNoMimeTypeIsAccepted() {
+        val r = SharedText.resolve(SharedText.ACTION_SEND, null, chat, null, null)
+        assertEquals(SharedText.Entry.SHARE, r?.entry)
+        assertEquals(chat, r?.text)
+    }
+
+    @Test fun weChatStyleMultipleEndToEndFromRawExtra() {
+        // Mirrors the real handler: read the raw extra, normalise, then resolve.
+        val raw: Any = arrayListOf(chat, reply, "对方：行吧。")
+        val r = SharedText.resolve(
+            SharedText.ACTION_SEND_MULTIPLE, "message/rfc822", null, null, null, null,
+            SharedText.normalizeItems(raw)
+        )
+        assertEquals(SharedText.Entry.SHARE, r?.entry)
+        assertEquals("$chat\n$reply\n对方：行吧。", r?.text)
     }
 }

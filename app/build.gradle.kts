@@ -6,8 +6,8 @@ android {
         applicationId = "com.flowai.communication"
         minSdk = 26
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 6
+        versionName = "0.1.5"
     }
     buildFeatures { compose = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }

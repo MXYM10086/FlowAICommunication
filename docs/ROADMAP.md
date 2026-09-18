@@ -25,6 +25,7 @@ FlowAI Communication：Android 跨应用上下文感知 AI 沟通助手。
 | 最近分析 | 仅当前一次分析；ViewModel 内存保留，不使用 SavedStateHandle | 无历史记录，见下方上下文说明 |
 | 核心测试 | 77 项单元测试通过（含 ShareConsumptionTest 11 项、SharedTextTest 31 项）；构建通过；Lint 0 错误 / 0 警告 | 2026-09-18 本轮重跑，见 TEST_RESULTS.md |
 | 模拟器验收 | README 8 条验收路径在 API 34 模拟器上跑通并截图 | 旋转仅验证状态保留（未验横屏布局），分享未经过真实微信 IPC，见 TEST_RESULTS.md |
+| 真机验收 | Android 16 / Redmi 上跑通 7 条自动 + 旋转人工确认 | 2026-09-19 首次真机；发现深色模式保持亮色、2.0x 字体顶栏换行两处问题，见 [DEVICE_ACCEPTANCE](verification/DEVICE_ACCEPTANCE.md) |
 | 分享文本重复导入 | 已修复：任务重建时不再重新导入已消费的分享文本 | 仅存文本哈希不存原文，15 分钟过期；原文仍留在系统任务记录中，见 README 与 TEST_RESULTS.md |
 | 微信分享导入 | 已修复：过滤器由 `text/plain` 放宽为 `text/*`，并支持 `EXTRA_HTML_TEXT` 与 `ClipData` 兜底 | 真机微信 IPC 交接仍需确认，失败可用 `adb logcat -s FlowAI` 定位 |
 | 划词入口 | 已实现 `ACTION_PROCESS_TEXT`：任意 App 选中文字 → 工具栏 → FlowAI | 零权限零政策风险；但只覆盖可选文本控件，微信/QQ 消息气泡通常不可选，因此不能替代分享 |
