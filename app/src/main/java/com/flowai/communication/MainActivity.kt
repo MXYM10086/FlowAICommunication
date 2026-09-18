@@ -160,7 +160,11 @@ class MainActivity : ComponentActivity() {
         Box(Modifier.fillMaxSize().padding(padding)) {
             when(vm.page) {
                 Page.HOME -> HomeScreen(vm::openInput, vm.clearedNotice)
-                Page.INPUT -> InputScreen(vm.input, vm.error, vm::edit, vm::analyze, vm.sourceType)
+                Page.INPUT -> InputScreen(
+                    vm.input, vm.error, vm::edit, vm::analyze, vm.sourceType,
+                    supersededNotice = vm.supersededNotice,
+                    clearedNotice = vm.clearedNotice
+                )
                 Page.ANALYSIS -> vm.analysis?.let { AnalysisScreen(it, vm::choose) }
                 Page.ACTION -> vm.output?.let { output -> vm.selected?.let { action ->
                     ActionScreen(action, output, vm::editReply)

@@ -59,6 +59,12 @@ Kotlin + Jetpack Compose Android 产品逻辑 MVP，包名 `com.flowai.communica
 
 悬浮助手、截屏 OCR、无障碍、输入法的平台约束、开源参照与推荐实施顺序见 [V2 技术路线](docs/V2_TECH_ROADMAP.md)。
 
+### 悬浮入口与会话生命周期（V2 首个增量）
+
+- **会话生命周期**：`domain/CaptureSession.kt` 把 Just-in-Time Context 落成状态机（`IDLE`/`ACTIVE`/`EXPIRED`），所有入口共用。纯 Kotlin、无 Android 依赖、时间可注入，因此超时与释放行为可单测。结束原因区分 `USER_ENDED`/`TIMED_OUT`/`SUPERSEDED`。
+- **悬浮球**：`system/FloatingAssistantService` —— 前台服务 + 常驻通知，点击只把应用切到前台。**它只作为入口，不会自动读取任何内容**。需要 `SYSTEM_ALERT_WINDOW`（在系统设置页授予，首页有引导）。
+- 已知平台限制：系统「设置」等安全敏感界面会隐藏非系统覆盖窗口，"分享"与"划词"入口因此必须保留。
+
 ## 架构
 
 `文本 → DialogueParser → Message[] → ContextCapsule → ConversationStateBuilder → ConversationState → NextActionEngine → Top-3 NextAction → ChatToActionEngine → ActionResult`

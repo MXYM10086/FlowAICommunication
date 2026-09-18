@@ -14,7 +14,40 @@
 
 ---
 
-## 已实施：两个零权限入口
+## 已实施：会话生命周期与悬浮入口
+
+### 0. `CaptureSession` 会话生命周期（已实现）
+
+Just-in-Time Context 的架构前提：**用户触发才获取、完成后释放**。所有 V2 入口（分享、划词、悬浮、截屏 OCR、无障碍）都只是"开启一次会话"的方式，因此生命周期只实现一次。
+
+- `domain/CaptureSession.kt` —— 纯 Kotlin 状态机（`IDLE` / `ACTIVE` / `EXPIRED`），**不含任何 Android API**：平台资源（覆盖窗口、MediaProjection、Bitmap）由调用方持有，并在 `end` / `onExpired` 时释放。
+- 时间**注入而非读取时钟**，因此超时行为可单测（16 项）。
+- 区分结束原因（`USER_ENDED` / `TIMED_OUT` / `SUPERSEDED`），调用方可据此准确释放资源与告知用户。
+- 已接入 `FlowViewModel`：`openInput` 开启会话、`endSession`/`onCleared` 释放、新建载荷标记 `SUPERSEDED`。
+- **顺带修掉了已知缺陷**："分享静默清空进行中的会话"现在会明确提示"上一段分析已被新的内容替换"。
+
+### 0b. 悬浮球（已实现原型）
+
+`system/FloatingAssistantService` + `system/FloatingBubbleView` + `system/OverlayPermission`。
+
+- **只作为入口**：点击仅把应用切到前台。**不自动读取任何内容**，Just-in-Time Context 不受影响。
+- 前台服务 + 常驻通知：让"FlowAI 正在其他应用之上"始终可见，这也是平台对长驻覆盖窗口的要求（`specialUse` 类型 + 对应权限）。
+- **窗口用 `WRAP_CONTENT` 只包住圆球**：Android 12+ 要求覆盖窗口在交互区之外足够透明，否则穿过它的触摸会被判定为"不可信触摸"而拦截。窗口紧贴不透明圆球即可规避。
+- `FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCH_MODAL`：不抢焦点，球以外的触摸穿透到下层应用。
+- 拖动后自动吸附到最近边缘。
+
+**实测结论（模拟器）**：
+
+| 项 | 结果 |
+| --- | --- |
+| 权限流程 | ✅ `Settings.canDrawOverlays` + 跳转系统授权页；adb 可用 `appops set ... SYSTEM_ALERT_WINDOW allow` 免手动 |
+| 覆盖窗口创建 | ✅ `mOwnerUid=… appop=SYSTEM_ALERT_WINDOW` |
+| 点击拉起应用 | ✅ 日志 `bubble tapped`，前台切到 MainActivity |
+| 开关关闭 | ✅ 日志 `floating assistant stopped`，覆盖窗口移除 |
+| 在普通应用上方显示 | ✅ 桌面、Chrome、信息 均可见（截图 `27-bubble-over-messaging.png`） |
+| **在系统「设置」上方** | ❌ **被系统隐藏**（`mForceHideNonSystemOverlayWindow=true`、`isVisible=false`） |
+
+**关于"设置里看不见"**：系统会强制隐藏非系统覆盖窗口。这是**平台行为，不是本实现的缺陷**，但与路线图里预警的 `HIDE_OVERLAY_WINDOWS` 风险是同一类问题。影响：安全敏感界面（系统设置、银行、部分支付/社交应用）上悬浮球可能不可见。**因此悬浮球不能作为唯一入口，分享与划词入口必须保留。** 需要真机确认微信是否属于这一类。
 
 ### 1. `ACTION_PROCESS_TEXT`（划词入口，已实现）
 
@@ -57,15 +90,16 @@
 ---
 
 ## 待实施，按推荐顺序
+### 第 3 步：悬浮窗助手（原型已实现，见上）
 
-### 第 3 步：悬浮窗助手（约 1 周）
+原型已完成"悬浮球 + 点击唤起 + 会话式生命周期"。**它只带来"入口常驻"，单独无法解决"读到对话"。**
 
-`SYSTEM_ALERT_WINDOW`（无运行时授权，走 `Settings.ACTION_MANAGE_OVERLAY_PERMISSION`）+ `TYPE_APPLICATION_OVERLAY`。
+仍需在真机处理：Android 12「不可信触摸」（窗口已按规避方式实现）、`HIDE_OVERLAY_WINDOWS`（实测系统设置会隐藏悬浮球）、国产 ROM 的后台弹出与悬浮窗开关。
 
 **三个必须预先设计对的坑：**
 
-1. **Android 12「不可信触摸」**：覆盖窗口必须"足够透明"，否则穿过它的触摸被系统拦截。对策：悬浮球窗口用 `WRAP_CONTENT` 只包球体、周围全透明；大范围遮罩用 `FLAG_NOT_TOUCHABLE` + alpha 0。（**精确透明度阈值未能取得官方原文，落地前必须核对**）
-2. **Android 12 `HIDE_OVERLAY_WINDOWS`**：任何 App 声明该权限后，其窗口上方的非系统覆盖窗口会被隐藏。**银行/支付类很可能这么做，微信未验证** → "只靠悬浮窗做入口"是最大产品风险。
+1. **Android 12「不可信触摸」**：覆盖窗口必须"足够透明"，否则穿过它的触摸被系统拦截。对策：悬浮球窗口用 `WRAP_CONTENT` 只包球体、周围全透明（**已实现**）；大范围遮罩用 `FLAG_NOT_TOUCHABLE` + alpha 0。（精确透明度阈值未能取得官方原文，落地前必须核对）
+2. **Android 12 `HIDE_OVERLAY_WINDOWS`**：任何 App 声明该权限后，其窗口上方的非系统覆盖窗口会被隐藏。**模拟器实测：系统「设置」上方悬浮球确实被隐藏**（`mForceHideNonSystemOverlayWindow=true`）。**微信是否如此未验证** → "只靠悬浮窗做入口"是最大产品风险，分享与划词入口必须保留。
 3. **国产 ROM**：小米/OPPO/vivo/华为另有"后台弹出界面/悬浮窗"开关与杀后台，屏译专门做了引导页。
 
 持 `SYSTEM_ALERT_WINDOW` 是"允许后台启动 Activity"的豁免条件之一（API 29+），对"点悬浮球直接拉起界面"很关键。

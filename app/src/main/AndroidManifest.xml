@@ -2,6 +2,16 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
     <!-- API 31 backup rules are ignored on older devices; fullBackupContent covers those. -->
+    <!--
+      Floating assistant entry point (V2). SYSTEM_ALERT_WINDOW is a special permission: it is
+      granted on a dedicated Settings screen, never through the runtime dialog. The overlay only
+      provides an entry point; it captures nothing by itself.
+    -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- Required for the specialUse foreground service type used by the floating bubble. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <application android:allowBackup="false" android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher" android:dataExtractionRules="@xml/data_extraction_rules"
         tools:targetApi="31" android:label="FlowAI Communication"
@@ -12,17 +22,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
             <!--
-              Real senders vary: WeChat and other apps commonly attach styled text as
-              EXTRA_HTML_TEXT or as text/html, which a text/plain-only filter never matches.
-              text/* is the broadest filter the platform supports for the text family.
-            -->
-            <!--
               Share sheet entry. Advertised as broadly as possible because senders differ and some
               (WeChat among them) would not surface the app under a narrower declaration:
                 1. */*         — matches any declared MIME type, including text/plain and text/html.
                 2. text/*      — kept explicitly for clarity/redundancy.
                 3. no <data>   — matches intents that never called setType() (type == null).
-                4. SEND_MULTIPLE — sharing several items; the payload is a String array.
+                4. SEND_MULTIPLE — sharing several items; the payload may be a String array or list.
               Advertising broadly only affects visibility in the share sheet: SharedText.resolve
               still rejects anything that carries no usable text, so non-text shares are ignored.
             -->
@@ -63,5 +68,18 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+        <!--
+          Foreground service hosting the floating bubble. Not exported: only this app starts it.
+          specialUse is declared because the bubble is a user-invoked entry point that does not fit
+          the media/location/data-sync categories.
+        -->
+        <service
+            android:name=".system.FloatingAssistantService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="User-invoked floating entry point for the communication assistant" />
+        </service>
     </application>
 </manifest>

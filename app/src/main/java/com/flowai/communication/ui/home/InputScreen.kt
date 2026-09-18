@@ -7,16 +7,28 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.flowai.communication.data.model.SourceType
+import com.flowai.communication.ui.components.InfoCard
 import com.flowai.communication.ui.components.MockNote
 
-@Composable fun InputScreen(text: String, error: String?, edit: (String) -> Unit, analyze: () -> Unit, source: SourceType = SourceType.TEXT) {
+@Composable fun InputScreen(
+    text: String,
+    error: String?,
+    edit: (String) -> Unit,
+    analyze: () -> Unit,
+    source: SourceType = SourceType.TEXT,
+    supersededNotice: String? = null,
+    clearedNotice: String? = null
+) {
     Column(Modifier.fillMaxSize().imePadding().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         Text("粘贴聊天文本", style = MaterialTheme.typography.headlineMedium)
         Text("每行一条消息，推荐使用“我：…”和“对方：…”。无说话人标签的行会标记为未知。")
         MockNote("内置案例使用固定模拟结果；其他文本使用通用模板。")
+        supersededNotice?.let { InfoCard(it, listOf("新内容已载入，上面那段分析不再保留。")) }
+        clearedNotice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
         val sourceNotice = when (source) {
             SourceType.SHARE -> "内容来自系统分享"
             SourceType.PROCESS_TEXT -> "内容来自划词选择"
+            SourceType.SCREENSHOT -> "内容来自截屏识别"
             else -> null
         }
         sourceNotice?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }

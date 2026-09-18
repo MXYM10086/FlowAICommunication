@@ -2,10 +2,16 @@ package com.flowai.communication.ui.home
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.flowai.communication.data.repository.DemoConversations
+import com.flowai.communication.system.FloatingAssistantService
+import com.flowai.communication.system.OverlayPermission
 import com.flowai.communication.ui.components.*
 
 @Composable fun HomeScreen(open: (String?) -> Unit, clearedNotice: String?) {
@@ -40,8 +46,54 @@ import com.flowai.communication.ui.components.*
             ))
         }
         item {
+            val context = LocalContext.current
+            // Recomputed on resume so returning from the system permission screen shows the new state.
+            var granted by remember { mutableStateOf(OverlayPermission.isGranted(context)) }
+            var running by remember { mutableStateOf(FloatingAssistantService.isRunning) }
+            val lifecycleOwner = LocalLifecycleOwner.current
+            DisposableEffect(lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    if (event == Lifecycle.Event.ON_RESUME) {
+                        granted = OverlayPermission.isGranted(context)
+                        running = FloatingAssistantService.isRunning
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+            }
+
+            InfoCard(
+                "悬浮入口",
+                listOf(
+                    if (!granted) "需要先在系统设置里允许「显示在其他应用上层」。"
+                    else if (running) "悬浮球已开启，可在其他应用上方随时点开 FlowAI。"
+                    else "已获得权限，可以开启悬浮球。",
+                    "悬浮球只作为入口，不会自动读取任何聊天内容。"
+                )
+            )
+            Spacer(Modifier.height(8.dp))
+            if (!granted) {
+                Button(
+                    onClick = { OverlayPermission.request(context) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("去系统设置授权") }
+            } else {
+                Button(
+                    onClick = {
+                        if (running) {
+                            FloatingAssistantService.stop(context)
+                            running = false
+                        } else {
+                            running = FloatingAssistantService.start(context)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(if (running) "关闭悬浮球" else "开启悬浮球") }
+            }
+        }
+        item {
             OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth()) { Text("导入聊天截图 · 后续开放") }
-            Text("第一阶段仅支持文本，截图识别尚未接入。", style = MaterialTheme.typography.bodySmall)
+            Text("截图识别尚未接入；悬浮入口已可用。", style = MaterialTheme.typography.bodySmall)
         }
         item { InfoCard("内容只用于本次会话", listOf(
             "结束或返回首页后清除，不保留最近分析。",

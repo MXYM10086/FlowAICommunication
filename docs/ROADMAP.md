@@ -44,8 +44,8 @@ FlowAI Communication：Android 跨应用上下文感知 AI 沟通助手。
 
 | 阶段 | 用户总纲中的范围 | 当前状态 |
 | --- | --- | --- |
-| V1 | 聊天理解 + Next Action + Chat to Action | 第一阶段 Mock 流程已构建；下一项验证为真机验收 |
-| V2 | 悬浮助手、AI 输入法 | 文本分享入口已接入；悬浮、输入法、无障碍、主动截屏/OCR 未开发 |
+| V1 | 聊天理解 + Next Action + Chat to Action | 第一阶段 Mock 流程已构建；模拟器与真机验收均已完成 |
+| V2 | 悬浮助手、AI 输入法 | **已开始**：`CaptureSession` 会话生命周期 + 悬浮球原型（0.2.0）；文本分享与划词入口已接入；输入法、无障碍、主动截屏/OCR 未开发 |
 | V3 | 自定义个人 Skill | 仅有 Skill / SkillRegistry 扩展边界 |
 | V4 | 日历、待办、邮件、企业协作工具 | 未接入；当前 Task / Event 为草稿 |
 | 长期 | 手机上的 Context-Aware AI Layer | 产品方向，不代表现有能力 |
