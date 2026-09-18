@@ -6,7 +6,9 @@ import android.graphics.PixelFormat
 import android.util.Log
 import android.view.Gravity
 import android.view.KeyEvent
+import android.view.MotionEvent
 import android.view.WindowManager
+import android.widget.FrameLayout
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.platform.ComposeView
@@ -52,7 +54,7 @@ class AssistantPanelWindow(
     private val store = ViewModelStore()
     private val savedStateController = SavedStateRegistryController.create(this)
     private val windowManager = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-    private var view: ComposeView? = null
+    private var view: android.view.View? = null
 
     /** Repository is shared with the app's flow so results stay identical. */
     private val mock = MockLlmService()
@@ -85,6 +87,20 @@ class AssistantPanelWindow(
             setContent { FlowTheme { PanelContent(seed) } }
         }
 
+        // ComposeView is final, so outside touches are caught by a wrapper instead of a subclass.
+        val root = OutsideTouchFrameLayout(context, onOutsideTouch = { destroy() }).apply {
+            addView(
+                composeView,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.WRAP_CONTENT
+                )
+            )
+            setViewTreeLifecycleOwner(this@AssistantPanelWindow)
+            setViewTreeViewModelStoreOwner(this@AssistantPanelWindow)
+            setViewTreeSavedStateRegistryOwner(this@AssistantPanelWindow)
+        }
+
         val layoutParams = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -99,13 +115,13 @@ class AssistantPanelWindow(
             gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
         }
 
-        runCatching { windowManager.addView(composeView, layoutParams) }
+        runCatching { windowManager.addView(root, layoutParams) }
             .onFailure {
                 Log.e(TAG, "could not add assistant panel", it)
                 destroy()
                 return
             }
-        view = composeView
+        view = root
         params = layoutParams
         Log.i(TAG, "assistant panel shown")
     }
@@ -173,16 +189,54 @@ class AssistantPanelWindow(
     }
 
     /** Escape hatch: the panel is a summary, the full app has everything. */
+    /**
+     * Escape hatch: the panel is a summary, the full app has everything.
+     *
+     * The panel is closed first — it is an overlay, so leaving it up would cover the app the user
+     * just asked to see.
+     */
     private fun openFullApp() {
+        hide()
         runCatching {
             context.startActivity(
                 android.content.Intent(context, com.flowai.communication.MainActivity::class.java)
                     .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
             )
-        }
+        }.onFailure { Log.w(TAG, "could not open full app", it) }
     }
 
     private companion object {
         const val TAG = "FlowAI"
     }
+}
+
+/**
+ * FrameLayout that also reports touches landing outside the panel.
+ *
+ * [WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH] only delivers those touches to the view's
+ * `onTouchEvent` as ACTION_OUTSIDE — declaring the flag without handling it does nothing, which is
+ * why tapping beside the panel used to leave it stuck on screen.
+ */
+private class OutsideTouchFrameLayout(
+    context: Context,
+    private val onOutsideTouch: () -> Unit = {}
+) : FrameLayout(context) {
+
+    /** Constructor the tooling expects; the panel uses the callback form above. */
+    @Suppress("unused")
+    constructor(context: Context, attrs: android.util.AttributeSet?) : this(context)
+    @Suppress("unused")
+    constructor(context: Context, attrs: android.util.AttributeSet?, defStyleAttr: Int) : this(context)
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (event.actionMasked == MotionEvent.ACTION_OUTSIDE) {
+            onOutsideTouch()
+            // Report the interaction so accessibility services see a click, not a swallowed touch.
+            performClick()
+            return true
+        }
+        return super.onTouchEvent(event)
+    }
+
+    override fun performClick(): Boolean = super.performClick()
 }
