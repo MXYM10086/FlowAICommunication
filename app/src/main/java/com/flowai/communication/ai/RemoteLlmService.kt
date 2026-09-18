@@ -43,12 +43,17 @@ class RemoteLlmService(
         if (analysis == null) return fallback.build(context)
         cached = analysis
         cachedFor = context.rawText
+        lastRawText = context.rawText
         return analysis.state
     }
 
     override suspend fun recommend(state: ConversationState): List<NextAction> {
         val cachedActions = cached?.actions.orEmpty()
-        Log.i(TAG, "recommend: cachedActions=${cachedActions.size} cachedFor=${cachedFor != null}")
+        Log.i(
+            TAG,
+            "recommend: cached=${cached != null} actions=${cachedActions.size} " +
+                "sameText=${cachedFor == lastRawText}"
+        )
         if (cachedActions.isNotEmpty()) return cachedActions
         return fallback.recommend(state)
     }
@@ -141,6 +146,9 @@ class RemoteLlmService(
         val repliesByAction: Map<String, List<ReplyCandidate>>,
         val note: String
     )
+
+    /** The text the cached analysis belongs to, so a later call cannot read a stale result. */
+    private var lastRawText: String? = null
 
     private fun parse(json: JSONObject): Analysis {
         val actions = json.optJSONArray("actions").toActions()

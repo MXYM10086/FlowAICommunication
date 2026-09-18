@@ -25,24 +25,38 @@ enum class Page { HOME, INPUT, ANALYSIS, ACTION, SETTINGS }
 private val EXTERNAL_SOURCES = setOf(SourceType.SHARE, SourceType.PROCESS_TEXT, SourceType.SCREENSHOT)
 
 /**
- * Presents one engine through all three engine interfaces, resolving it on every call.
+ * Presents one engine through all three engine interfaces.
  *
- * Resolving per call is what lets the user switch between the local engine and a configured relay
- * without rebuilding the ViewModel: the next analysis simply uses the new engine.
+ * The instance is kept while the configuration is unchanged, and rebuilt when it changes. That
+ * matters for the API engine: its first call fetches the whole analysis and the later two read from
+ * it, so handing each call a fresh instance would throw that result away and send it back to the
+ * local fallback.
  */
-private class SuspendingEngine(private val factory: () -> LlmService) :
-    ConversationStateBuilder, NextActionEngine, ChatToActionEngine {
+private class SuspendingEngine(
+    private val factory: () -> LlmService,
+    private val signature: () -> String = { "" }
+) : ConversationStateBuilder, NextActionEngine, ChatToActionEngine {
 
-    override suspend fun build(context: ContextCapsule): ConversationState = factory().build(context)
+    private var current: LlmService? = null
+    private var currentSignature: String? = null
+
+    private fun engine(): LlmService {
+        val now = signature()
+        val existing = current
+        if (existing != null && currentSignature == now) return existing
+        return factory().also { current = it; currentSignature = now }
+    }
+
+    override suspend fun build(context: ContextCapsule): ConversationState = engine().build(context)
 
     override suspend fun recommend(state: ConversationState): List<NextAction> =
-        factory().recommend(state)
+        engine().recommend(state)
 
     override suspend fun execute(
         context: ContextCapsule,
         state: ConversationState,
         action: NextAction
-    ): ActionResult = factory().execute(context, state, action)
+    ): ActionResult = engine().execute(context, state, action)
 }
 
 /** Sensitive state belongs to this in-memory session, never SavedStateHandle. */
@@ -51,18 +65,20 @@ class FlowViewModel(
     /** Owns the Just-in-Time context lifecycle. Platform resources release in response to it. */
     val capture: CaptureSession = CaptureSession(),
     /**
-     * Chooses the engine for each call.
+     * Chooses the engine.
      *
      * Defaults to the local one so tests and unconfigured installs never touch the network; the app
-     * passes a factory that returns the relay-backed engine once an endpoint is configured.
+     * passes a factory plus a signature that changes when the configuration does.
      */
-    private val engineFactory: () -> LlmService = { MockLlmService() }
+    private val engineFactory: () -> LlmService = { MockLlmService() },
+    private val engineSignature: () -> String = { "" }
 ) : ViewModel() {
+    private val engines = SuspendingEngine(engineFactory, engineSignature)
     private val repository = ConversationRepository(
         PlainTextDialogueParser(),
-        SuspendingEngine(engineFactory),
-        SuspendingEngine(engineFactory),
-        SuspendingEngine(engineFactory)
+        engines,
+        engines,
+        engines
     )
     var page by mutableStateOf(Page.HOME); private set
     var input by mutableStateOf(""); private set

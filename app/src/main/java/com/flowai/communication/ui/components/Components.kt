@@ -25,6 +25,24 @@ private val colors = lightColorScheme(
     }
 }
 /**
+ * Corner badge naming the engine actually in use.
+ *
+ * A fixed "MOCK" label would be wrong as soon as the API is switched on, which is exactly the kind
+ * of stale claim that misleads a reviewer.
+ */
+@Composable fun EngineBadge() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val settings = androidx.compose.runtime.remember {
+        com.flowai.communication.ai.EngineSettingsStore(context).load()
+    }
+    Text(
+        if (settings.canUseRemote) "API" else "本机",
+        style = MaterialTheme.typography.labelMedium,
+        modifier = Modifier.padding(end = 16.dp)
+    )
+}
+
+/**
  * States where analysis happens, based on the actual configuration.
  *
  * Not a fixed "local only" banner: the app can be pointed at an analysis service, and claiming

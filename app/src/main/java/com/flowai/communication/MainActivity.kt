@@ -43,6 +43,7 @@ import com.flowai.communication.ui.*
 import com.flowai.communication.ui.home.*
 import com.flowai.communication.ui.analysis.AnalysisScreen
 import com.flowai.communication.ui.action.ActionScreen
+import com.flowai.communication.ui.components.EngineBadge
 import com.flowai.communication.ui.components.FlowTheme
 
 /** Extra that opens the assistant panel directly; used for testing and from the home screen. */
@@ -202,10 +203,17 @@ class MainActivity : ComponentActivity() {
         // process-surviving "already consumed" store. Without it, an intent re-delivered after
         // process death would silently re-import chat text the user had already ended the
         // session on.
-        val factory = viewModelFactory { initializer { FlowViewModel(
-            consumedShares = PrefsConsumedShareStore(applicationContext),
-            engineFactory = com.flowai.communication.ai.EngineSettingsStore.engineFactory(applicationContext)
-        ) } }
+        val factory = viewModelFactory { initializer {
+            // One engine per configuration: the API engine caches the whole analysis from its first
+            // call, so replacing it on every call would discard that result and fall back to local.
+            val (engine, signature) =
+                com.flowai.communication.ai.EngineSettingsStore.engineFactory(applicationContext)
+            FlowViewModel(
+                consumedShares = PrefsConsumedShareStore(applicationContext),
+                engineFactory = engine,
+                engineSignature = signature
+            )
+        } }
         setContent {
             // Text fields and LazyColumn children can save state internally too.
             CompositionLocalProvider(LocalSaveableStateRegistry provides null) {
@@ -351,7 +359,7 @@ class MainActivity : ComponentActivity() {
             if (vm.page != Page.HOME) TextButton(onClick = vm::back) {
                 Text(if (vm.page == Page.ACTION) "返回分析" else "结束返回")
             }
-        }, actions = { Text("MVP · MOCK  ", style = MaterialTheme.typography.labelMedium) })
+        }, actions = { EngineBadge() })
     }, bottomBar = {
         if (vm.page != Page.HOME) Surface(tonalElevation = 2.dp) {
             Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 10.dp)) {

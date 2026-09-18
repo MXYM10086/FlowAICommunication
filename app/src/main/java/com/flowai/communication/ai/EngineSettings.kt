@@ -107,11 +107,17 @@ class EngineSettingsStore(context: Context) {
         /**
          * Engine factory for callers that only have a Context.
          *
-         * Resolved per call by design, so a settings change takes effect on the next analysis.
+         * [signature] changes when the configuration changes, which is how a caller knows to drop a
+         * cached engine: the API engine holds the whole analysis after its first call, so reusing it
+         * while nothing changed is what keeps the follow-up calls from going back to the fallback.
          */
-        fun engineFactory(context: Context): () -> LlmService {
+        fun engineFactory(context: Context): Pair<() -> LlmService, () -> String> {
             val store = EngineSettingsStore(context.applicationContext)
-            return { store.engineOrLocal() }
+            val signature = {
+                val s = store.load()
+                "${s.mode}|${s.providerUrl}|${s.model}|${s.apiKey.hashCode()}|${s.consentedAt}"
+            }
+            return ({ store.engineOrLocal() }) to signature
         }
     }
 }

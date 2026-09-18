@@ -26,6 +26,7 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.flowai.communication.ai.EngineSettingsStore
+import com.flowai.communication.ai.LlmService
 import com.flowai.communication.data.model.*
 import com.flowai.communication.data.repository.ConversationRepository
 import com.flowai.communication.domain.ChatToActionEngine
@@ -325,24 +326,36 @@ class AssistantPanelWindow(
 /**
  * Presents the configured engine through all three engine interfaces.
  *
- * Delegates to whichever engine the settings select, resolved on each call so a configuration
- * change takes effect on the next analysis.
+ * Keeps one instance while the configuration is unchanged, and rebuilds it when the settings
+ * change. That matters for the API engine, whose first call fetches the whole analysis and whose
+ * later two read from it — a fresh instance per call would discard that and fall back to local.
  */
 private class ConfigurableEngine(context: Context) :
     ConversationStateBuilder, NextActionEngine, ChatToActionEngine {
 
-    private val factory = EngineSettingsStore.engineFactory(context)
+    private val engineFactory = EngineSettingsStore.engineFactory(context)
+    private val factory = engineFactory.first
+    private val signature = engineFactory.second
+    private var current: LlmService? = null
+    private var currentSignature: String? = null
 
-    override suspend fun build(context: ContextCapsule): ConversationState = factory().build(context)
+    private fun engine(): LlmService {
+        val now = signature()
+        val existing = current
+        if (existing != null && currentSignature == now) return existing
+        return factory().also { current = it; currentSignature = now }
+    }
+
+    override suspend fun build(context: ContextCapsule): ConversationState = engine().build(context)
 
     override suspend fun recommend(state: ConversationState): List<NextAction> =
-        factory().recommend(state)
+        engine().recommend(state)
 
     override suspend fun execute(
         context: ContextCapsule,
         state: ConversationState,
         action: NextAction
-    ): ActionResult = factory().execute(context, state, action)
+    ): ActionResult = engine().execute(context, state, action)
 }
 
 /**
