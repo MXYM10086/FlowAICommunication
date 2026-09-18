@@ -49,6 +49,46 @@ Just-in-Time Context 的架构前提：**用户触发才获取、完成后释放
 
 **关于"设置里看不见"**：系统会强制隐藏非系统覆盖窗口。这是**平台行为，不是本实现的缺陷**，但与路线图里预警的 `HIDE_OVERLAY_WINDOWS` 风险是同一类问题。影响：安全敏感界面（系统设置、银行、部分支付/社交应用）上悬浮球可能不可见。**因此悬浮球不能作为唯一入口，分享与划词入口必须保留。** 需要真机确认微信是否属于这一类。
 
+### 0c. 截屏 + 端侧 OCR（已实现原型）
+
+`system/Screenshotter`（接口）+ `MediaProjectionScreenshotter` + `system/OcrEngine` + `MlKitOcrEngine` + `system/ScreenCaptureService`。
+
+**从开源实现学到并采纳的做法**（主要参考 [ciddwd/overlay-translator](https://github.com/ciddwd/overlay-translator)，已逐文件读其源码）：
+
+| 学到的东西 | 本项目如何落地 |
+| --- | --- |
+| **把截屏抽象成接口** | `Screenshotter`，将来可加 Shizuku 后端而调用方无感 |
+| **启动策略集中一处** | `ScreenCaptureService` 是唯一启动点，避免"home / 悬浮球 / 未来的入口各写一套" |
+| **区域裁剪由调用方负责** | `CaptureRegion` 传下去，OCR 只看到聊天区，不扫描无关屏幕内容 |
+| **坐标系必须与覆盖窗口一致** | 虚拟显示用**物理屏尺寸**，区域坐标可直接映射 |
+| **`onCapturedContentResize` 必须处理** | Android 14 窗口级共享/旋转会改尺寸；已实现 `resize()` 重建 ImageReader |
+| **截图文本不得全局保留** | 每帧识别后 `bitmap.recycle()`，语言/文本缓存不跨帧（其源码注释显式写明这条） |
+| **OCR 引擎抽象** | `OcrEngine.recognize(bitmap) -> List<OcrLine>` + `close()` |
+| **决策逻辑抽成纯策略类并配测试** | `OcrTextAssembler`（排序/拼接/过滤）+ `CaptureRegion`（校验/裁剪）均为纯 Kotlin，共 16 项测试 |
+
+**刻意没采纳的**：它的漫画气泡检测、帧稳定性循环、多引擎路由（`AutoOcrRoutingPolicy`）等 —— 那些服务于"实时翻译整屏"，而本产品只需要一次性读聊天区。
+
+**OCR 选型：ML Kit 捆绑版中文模型**（`com.google.mlkit:text-recognition-chinese`）。依赖树里出现 `text-recognition-bundled-common`，确认拿到的是**捆绑版**：模型打进 APK、完全离线、**不依赖 Google Play services**。unbundled 版靠 GMS 动态下载、下载完成前返回空结果，在无 GMS 机型上会表现为"识别不到"——对截屏功能是错误的失败模式。
+
+⚠️ **代价：APK 从 7.64 MB 涨到 50.7 MB**，因为四个 ABI 各带一份 `libmlkit_google_ocr_pipeline.so`（7–12 MB/架构）。**待决策**：用 ABI split / App Bundle 只发 arm64 可显著缩小，但这会牺牲 x86 模拟器调试便利。
+
+**实测结论（模拟器，Android 14）**：
+
+| 项 | 结果 |
+| --- | --- |
+| 系统授权弹窗 | ✅ `MediaProjectionPermissionActivity` 正常弹出（Cancel / Start now） |
+| 前台服务类型 | ✅ `isForeground=true types=00000020`（mediaProjection） |
+| 虚拟显示建立 | ✅ `capture ready: 1080x2209 @ 420 dpi` |
+| 尺寸变化回调 | ✅ `captured content resized to 1080x2400` |
+| **端到端 OCR** | ✅ **`screen capture recognised chars=278`**，中文文本正确进入输入框，来源显示"内容来自截屏识别" |
+| 资源释放 | ✅ `projection stopped` → `capture released` → `capture session released` |
+
+**踩到并修掉的两个顺序问题**：
+1. **授权弹窗会把宿主 Activity 推到后台**。最初把抓取放在 `LaunchedEffect` 里，且等待窗口只有 5 秒 —— 比用户读弹窗的时间还短，于是授权后没人去抓帧。现改为**由 Activity 自己的 CoroutineScope 持有抓取协程**，并把等待上限放宽到 30 秒。
+2. Android 14 要求 `startForeground(mediaProjection)` **早于** `getMediaProjection()`；`registerCallback` 必须**早于** `createVirtualDisplay()`，否则抛异常。两者均已按序实现。
+
+**已知限制**：全屏捕获，尚未做区域选择 UI；`FLAG_SECURE` 界面（网银、部分视频）截出黑屏，不做绕过；OCR 对小字有误识别（实测"权限"→"衩限"、"屏幕"→"屏慕"），后续可用区域裁剪 + 放大改善。
+
 ### 1. `ACTION_PROCESS_TEXT`（划词入口，已实现）
 
 用户在**任意 App 里选中文字** → 系统选择工具栏 → 「用 FlowAI 分析」。这是最短路径入口，且天然满足 Just-in-Time Context：用户明确选中才触发。
@@ -106,9 +146,9 @@ Just-in-Time Context 的架构前提：**用户触发才获取、完成后释放
 
 **它只解决"入口常驻"，单独无法解决"读到对话"。**
 
-### 第 4 步：MediaProjection + 区域 OCR（约 1–2 周）
+### 第 4 步：MediaProjection + 区域 OCR（链路已实现，区域选择待做）
 
-**这一步才真正解决"接收整段聊天文本"，且不触碰 Play 高危权限。**
+**这一步才真正解决"接收整段聊天文本"，且不触碰 Play 高危权限。** 截屏与 OCR 链路已跑通（见上方 0c）；剩余的是**区域选择 UI** 与识别质量优化。
 
 Android 14（本应用 targetSdk 34，直接受影响）三条硬要求：
 

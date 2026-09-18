@@ -1,11 +1,13 @@
 package com.flowai.communication
 
 import android.content.Intent
+import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -16,29 +18,145 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.LocalSaveableStateRegistry
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import com.flowai.communication.data.model.SourceType
 import com.flowai.communication.domain.PrefsConsumedShareStore
 import com.flowai.communication.domain.SharedText
+import com.flowai.communication.system.ScreenCaptureService
 import com.flowai.communication.ui.*
 import com.flowai.communication.ui.home.*
 import com.flowai.communication.ui.analysis.AnalysisScreen
 import com.flowai.communication.ui.action.ActionScreen
 import com.flowai.communication.ui.components.FlowTheme
 
+/** adb logcat -s FlowAI */
+private const val TAG = "FlowAI"
+
+/**
+ * Upper bound on waiting for the projection to come up after consent.
+ *
+ * Generous on purpose: the user reads a consent dialog first, and a timeout shorter than that
+ * (5s was too short in practice) would abandon the capture before it ever started.
+ */
+private const val CAPTURE_READY_TIMEOUT_MS = 30_000L
+private const val CAPTURE_READY_INTERVAL_MS = 100L
+
+/** Extra settle time so the virtual display has produced at least one frame. */
+private const val CAPTURE_SETTLE_MS = 600L
+
 class MainActivity : ComponentActivity() {
+
     private var incoming by mutableStateOf<SharedText.Incoming?>(null)
 
     /** Last payload handed to the ViewModel, so repeat deliveries are logged as such. */
     private var lastDelivered: String? = null
 
+    /** Set while the capture session is being established, so the UI can show progress. */
+    private var captureInProgress by mutableStateOf(false)
+
+    /** The live ViewModel, so the capture coroutine can deliver results. */
+    private var activeVm: FlowViewModel? = null
+
+    /** Owns the capture coroutine; the Activity outlives the consent dialog. */
+    private val captureScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /**
+     * MediaProjection consent. Android 14 requires consent for EVERY capture session, so this
+     * launcher is used per capture and its result is never cached or reused.
+     */
+    private val projectionConsent = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val data = result.data
+        if (result.resultCode != RESULT_OK || data == null) {
+            Log.i(TAG, "screen capture consent denied")
+            activeVm?.reportCaptureUnavailable("已取消截屏授权")
+            captureInProgress = false
+            return@registerForActivityResult
+        }
+        val started = ScreenCaptureService.start(applicationContext, result.resultCode, data)
+        Log.i(TAG, "screen capture session start requested: started=$started")
+        if (!started) {
+            activeVm?.reportCaptureUnavailable("无法启动截屏服务")
+            captureInProgress = false
+        } else {
+            runCapture()
+        }
+    }
+
+    /** Asks for consent; the result callback then runs [runCapture]. */
+    private fun requestScreenCapture() {
+        if (captureInProgress) return
+        captureInProgress = true
+        val manager = getSystemService(MediaProjectionManager::class.java)
+        projectionConsent.launch(manager.createScreenCaptureIntent())
+    }
+
+    /**
+     * Waits for the projection, captures once, and hands the text to the normal pipeline.
+     *
+     * Runs on [captureScope] rather than inside the composition: the consent dialog backgrounds the
+     * host and a composition-scoped effect can be cancelled mid-wait.
+     */
+    private fun runCapture() {
+        captureScope.launch {
+            // Wait for the projection to come up. Without this the first frames do not exist yet
+            // and the capture would look like a broken OCR rather than an early read.
+            var waited = 0L
+            while (!ScreenCaptureService.isActive && waited < CAPTURE_READY_TIMEOUT_MS) {
+                delay(CAPTURE_READY_INTERVAL_MS)
+                waited += CAPTURE_READY_INTERVAL_MS
+            }
+            // Even once active the virtual display needs a frame or two.
+            delay(CAPTURE_SETTLE_MS)
+
+            val active = ScreenCaptureService.isActive
+            val text = if (active) {
+                withContext(Dispatchers.IO) {
+                    ScreenCaptureService.captureText(ScreenCaptureService.requestedRegion())
+                }
+            } else null
+            ScreenCaptureService.stop(applicationContext)
+
+            val vm = activeVm
+            when {
+                !active -> {
+                    Log.i(TAG, "capture session never became active")
+                    vm?.reportCaptureUnavailable("没有拿到截屏权限或截屏服务未启动")
+                }
+                text.isNullOrBlank() -> {
+                    Log.i(TAG, "screen capture produced no text")
+                    vm?.reportCaptureEmpty()
+                }
+                else -> {
+                    Log.i(TAG, "screen capture recognised chars=${text.length}")
+                    // allowSameText: re-reading the same screen is an explicit user action.
+                    vm?.consumeShare(text, SourceType.SCREENSHOT, allowSameText = true)
+                }
+            }
+            captureInProgress = false
+        }
+    }
+
+    override fun onDestroy() {
+        captureScope.cancel()
+        super.onDestroy()
+    }
+
     private companion object {
-        /** adb logcat -s FlowAI */
-        const val TAG = "FlowAI"
+        // Constants shared with the composition are file-level (see top of this file).
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,7 +172,16 @@ class MainActivity : ComponentActivity() {
         setContent {
             // Text fields and LazyColumn children can save state internally too.
             CompositionLocalProvider(LocalSaveableStateRegistry provides null) {
-                FlowTheme { FlowApp(incoming = incoming, factory = factory) }
+                FlowTheme {
+                    FlowApp(
+                        incoming = incoming,
+                        captureInProgress = captureInProgress,
+                        onRequestCapture = ::requestScreenCapture,
+                        onCaptureFinished = { captureInProgress = false },
+                        onViewModelReady = { activeVm = it },
+                        factory = factory
+                    )
+                }
             }
         }
     }
@@ -129,9 +256,18 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun FlowApp(
     incoming: SharedText.Incoming? = null,
+    captureInProgress: Boolean = false,
+    onRequestCapture: () -> Unit = {},
+    onCaptureFinished: () -> Unit = {},
+    onViewModelReady: (FlowViewModel) -> Unit = {},
     factory: ViewModelProvider.Factory? = null,
     vm: FlowViewModel = if (factory != null) viewModel(factory = factory) else viewModel()
 ) {
+    val context = LocalContext.current
+    // Hand the ViewModel to the Activity so the capture coroutine (owned by the Activity, not the
+    // composition) can deliver its result. Driving capture from a LaunchedEffect is fragile here:
+    // the consent dialog backgrounds the host, which can cancel a composition-scoped effect.
+    LaunchedEffect(vm) { onViewModelReady(vm) }
     LaunchedEffect(incoming) {
         val payload = incoming ?: return@LaunchedEffect
         val source = when (payload.entry) {
@@ -159,7 +295,13 @@ class MainActivity : ComponentActivity() {
     }) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             when(vm.page) {
-                Page.HOME -> HomeScreen(vm::openInput, vm.clearedNotice)
+                Page.HOME -> HomeScreen(
+                    open = vm::openInput,
+                    clearedNotice = vm.clearedNotice,
+                    captureNotice = vm.captureNotice,
+                    captureInProgress = captureInProgress,
+                    onRequestCapture = onRequestCapture
+                )
                 Page.INPUT -> InputScreen(
                     vm.input, vm.error, vm::edit, vm::analyze, vm.sourceType,
                     supersededNotice = vm.supersededNotice,

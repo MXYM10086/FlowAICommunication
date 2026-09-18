@@ -12,6 +12,8 @@
     <!-- Required for the specialUse foreground service type used by the floating bubble. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Screenshot capture (V2). Android 14 requires this permission AND the service type below. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <application android:allowBackup="false" android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher" android:dataExtractionRules="@xml/data_extraction_rules"
         tools:targetApi="31" android:label="FlowAI Communication"
@@ -81,5 +83,14 @@
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="User-invoked floating entry point for the communication assistant" />
         </service>
+        <!--
+          Screenshot capture. Declared as a mediaProjection foreground service because Android 14
+          requires the type AND that startForeground happen before getMediaProjection(). Not
+          exported: consent data comes only from this app's own Activity.
+        -->
+        <service
+            android:name=".system.ScreenCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
     </application>
 </manifest>

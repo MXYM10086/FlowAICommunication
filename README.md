@@ -59,11 +59,20 @@ Kotlin + Jetpack Compose Android 产品逻辑 MVP，包名 `com.flowai.communica
 
 悬浮助手、截屏 OCR、无障碍、输入法的平台约束、开源参照与推荐实施顺序见 [V2 技术路线](docs/V2_TECH_ROADMAP.md)。
 
-### 悬浮入口与会话生命周期（V2 首个增量）
+### 悬浮入口与会话生命周期（V2 增量）
 
 - **会话生命周期**：`domain/CaptureSession.kt` 把 Just-in-Time Context 落成状态机（`IDLE`/`ACTIVE`/`EXPIRED`），所有入口共用。纯 Kotlin、无 Android 依赖、时间可注入，因此超时与释放行为可单测。结束原因区分 `USER_ENDED`/`TIMED_OUT`/`SUPERSEDED`。
 - **悬浮球**：`system/FloatingAssistantService` —— 前台服务 + 常驻通知，点击只把应用切到前台。**它只作为入口，不会自动读取任何内容**。需要 `SYSTEM_ALERT_WINDOW`（在系统设置页授予，首页有引导）。
 - 已知平台限制：系统「设置」等安全敏感界面会隐藏非系统覆盖窗口，"分享"与"划词"入口因此必须保留。
+
+### 截屏识别（V2 增量，测试版）
+
+首页「截屏识别聊天内容」→ 系统授权 → 截屏并用**端侧 OCR** 识别其中文字 → 进入同一个分析流程（来源显示"内容来自截屏识别"）。
+
+- **完全离线**：使用 ML Kit **捆绑版中文模型**，模型在 APK 内，不依赖 Google Play services、不联网。
+- **只用一次**：Android 14 起每次截屏都要重新授权；识别完立即释放 `MediaProjection` 与 Bitmap，不持续截屏、不保留历史。
+- ⚠️ **APK 因此增大到约 51 MB**（四个 ABI 各带一份原生 OCR 库）。可通过 ABI split / App Bundle 只发 arm64 显著缩小，尚未做。
+- 已知限制：目前是全屏识别，区域选择 UI 未做；`FLAG_SECURE` 界面会截出黑屏（不绕过）；小字有误识别。
 
 ## 架构
 

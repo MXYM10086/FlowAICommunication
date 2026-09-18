@@ -14,7 +14,13 @@ import com.flowai.communication.system.FloatingAssistantService
 import com.flowai.communication.system.OverlayPermission
 import com.flowai.communication.ui.components.*
 
-@Composable fun HomeScreen(open: (String?) -> Unit, clearedNotice: String?) {
+@Composable fun HomeScreen(
+    open: (String?) -> Unit,
+    clearedNotice: String?,
+    captureNotice: String? = null,
+    captureInProgress: Boolean = false,
+    onRequestCapture: () -> Unit = {}
+) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         item {
             Text("让沟通有下一步", style = MaterialTheme.typography.headlineLarge)
@@ -89,6 +95,27 @@ import com.flowai.communication.ui.components.*
                     },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text(if (running) "关闭悬浮球" else "开启悬浮球") }
+            }
+        }
+        item {
+            InfoCard("截屏识别（测试版）", listOf(
+                "把聊天界面显示在屏幕上，点下面的按钮，FlowAI 会截屏并识别其中的文字。",
+                "只识别这一次；识别完立即释放，不会持续截屏。",
+                if (captureInProgress) "正在等待截屏授权…" else "系统会先询问是否允许截屏。"
+            ))
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = onRequestCapture,
+                enabled = !captureInProgress,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(if (captureInProgress) "正在截屏…" else "截屏识别聊天内容") }
+            Text(
+                "识别结果会进入同一个分析流程，可先核对再分析。",
+                style = MaterialTheme.typography.bodySmall
+            )
+            captureNotice?.let {
+                Spacer(Modifier.height(8.dp))
+                InfoCard("提示", listOf(it))
             }
         }
         item {

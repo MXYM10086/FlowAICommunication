@@ -37,6 +37,9 @@ class FlowViewModel(
     /** Set when a new external payload replaced work the user had not finished. */
     var supersededNotice by mutableStateOf<String?>(null); private set
 
+    /** Set when a capture ran but recognised nothing worth analysing. */
+    var captureNotice by mutableStateOf<String?>(null); private set
+
     /** Mirrors [CaptureSession.state] for the UI (drives any "session active" indication). */
     val captureState: CaptureState get() = capture.state
 
@@ -61,15 +64,31 @@ class FlowViewModel(
      * Called once per externally delivered text; a re-delivered identical payload is ignored.
      * This covers rotation and — via a process-surviving store — task recreation after process
      * death, where Android re-delivers the original intent from the task record.
+     *
+     * [allowSameText] exists for capture: re-reading the same screen is an explicit user action, so
+     * it must not be swallowed by the "already delivered" guard.
      */
-    fun consumeShare(text: String, source: SourceType = SourceType.SHARE) {
+    fun consumeShare(text: String, source: SourceType = SourceType.SHARE, allowSameText: Boolean = false) {
         if (source !in EXTERNAL_SOURCES) return
-        if (text == lastSharedText) return
-        if (consumedShares.wasConsumed(text)) return
+        val consumed = consumedShares.wasConsumed(text)
+        if ((text == lastSharedText || consumed) && !allowSameText) return
         lastSharedText = text
         consumedShares.markConsumed(text)
         openInput(text, source)
     }
+
+    /** Called when a capture ran but produced no usable text. */
+    fun reportCaptureEmpty() {
+        captureNotice = "这次截屏没有识别到文字，请让聊天内容完整显示在屏幕上后重试"
+    }
+
+    /** Called when the capture pipeline could not run at all. */
+    fun reportCaptureUnavailable(reason: String) {
+        captureNotice = reason
+    }
+
+    /** Clears the capture notice once the user acknowledges it by moving on. */
+    fun dismissCaptureNotice() { captureNotice = null }
 
     /** Releases an over-deadline session. Callers release their platform resources when this is true. */
     fun releaseIfExpired(now: Long = System.currentTimeMillis()): Boolean {
@@ -84,8 +103,8 @@ class FlowViewModel(
     fun analyze() {
         // Drop old results even if analysis of the new input fails.
         analysis = null; selected = null; output = null; error = null
-        // Any "previously cleared" / "superseded" notice is now stale.
-        clearedNotice = null; supersededNotice = null
+        // Any "previously cleared" / "superseded" / capture notice is now stale.
+        clearedNotice = null; supersededNotice = null; captureNotice = null
         runCatching { repository.analyze(input, sourceType) }.onSuccess {
             analysis = it
             page = Page.ANALYSIS

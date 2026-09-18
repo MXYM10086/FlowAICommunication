@@ -9,4 +9,9 @@
     <string name="floating_channel_desc">在其他应用上方显示 FlowAI 悬浮球</string>
     <string name="floating_notification_title">FlowAI 悬浮球已开启</string>
     <string name="floating_notification_text">点击可随时打开 FlowAI；悬浮球只作为入口，不会自动读取任何内容</string>
+    <!-- Screenshot capture (V2). -->
+    <string name="capture_channel_name">截屏识别</string>
+    <string name="capture_channel_desc">正在截取屏幕以识别聊天内容</string>
+    <string name="capture_notification_title">正在识别屏幕内容</string>
+    <string name="capture_notification_text">仅在本次识别期间截屏；识别完成后立即释放</string>
 </resources>

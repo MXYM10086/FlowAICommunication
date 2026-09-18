@@ -9,3 +9,7 @@ local.properties
 # Release artifacts are attached to a tag/release, not tracked in the working tree.
 *.apk
 *.apk.sha256
+
+# 临时提交信息文件
+.commitmsg*.tmp
+.git-commit-msg.tmp
