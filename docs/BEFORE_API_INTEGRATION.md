@@ -1,67 +1,98 @@
-# 接入真实 LLM API 之前必须做的事
+# 接入真实 LLM API：进度与剩余事项
 
-状态：**未开始**。当前版本 0.9.0 仍是 `MockLlmService`（内置案例用固定结果，其他文本走通用模板）。
-本文记录调研结论与必须的处理项，供下次继续时直接使用。
+状态：**已完成 1–4**（版本 1.0.1）。第 5 项（参赛材料）需用户确认比赛要求。
+
+当前实现：默认**本机分析**；配置端点并**明确同意**后才会上传；远程失败一律回落本地。
 
 ---
 
-## 🔴 1. API Key 不能放进 App
+## ✅ 1. API Key 不进 App（已完成）
 
-APK 可被反编译，**任何内置 key 等同公开**，会被刷爆。
+`ai/EngineSettings.kt` 只保存**中转端点 URL** 与可选的访问令牌；模型提供商的凭据保存在中转服务上。
+设置页的说明也写明了这一点。
 
-**做法**：加一层自建后端做中转，App 只调自己的服务，key 存服务端。
+新增 `ai/RemoteLlmService.kt`：向中转 `POST` 三种任务（`state` / `actions` / `execute`），解析结构化响应。
 
-对应改动：`ai/MockLlmService.kt` 的实现替换为「调用自建端点」，端点 URL 可配置。
+**强制 https**：明文端点会被拒绝（debug 构建额外允许 RFC1918 私有地址，便于本地联调；
+release 不引用该网络配置，始终 https-only）。
 
-## 🔴 2. 隐私说明必须改，并且真的做到
+## ✅ 2. 隐私说明与同意（已完成）
 
-当前 App 明确写着：
+原先硬编码的「本地 Mock 演示 · 无需 API Key · 不上传聊天内容」已删除 —— 接入远程后那句话就是假的。
+`ui/components/Components.kt` 的 `EngineNote` 改为按**实际配置**显示：
 
-> 「本地 Mock 演示 · 无需 API Key · **不上传聊天内容**」
+| 状态 | 文案 |
+| --- | --- |
+| 未配置 | 本机分析 · 聊天内容不离开手机 |
+| 已配置未同意 | 已配置分析服务，但尚未同意上传 · 当前仍在本机分析 |
+| 已同意 | 上传分析 · 你主动提供的内容会发送至已配置的服务 |
 
-接入真实 API 后聊天文字会**发往外部服务**，与现有文案直接矛盾；且对方消息的发送者未必知道内容被上传。
+`ui/settings/EngineSettingsScreen.kt`：配置端点、**独立弹窗**给出同意（写明将发送到的地址与内容范围）、
+随时停止上传。**更换端点会清除旧同意** —— 用户同意的是某个具体端点。
 
-**必须**：
+**实现要点**：`canUseRemote = isConfigured && hasConsent` —— 两道闸门都满足才会上传。
 
-- 首次使用弹出**明确同意**（说明"内容将发送至 XX 服务用于分析"）
-- 隐私政策写明数据流向、保留策略
-- 保持现有的 Just-in-Time Context 原则：用户主动触发、用完即释放、不落盘
+## ✅ 3. 同步改异步（已完成）
 
-对应改动：新增同意弹窗 + 更正 `MainActivity` 里那段「不上传聊天内容」的文案与 `README`。
+三个引擎接口与 `ConversationRepository` 的方法加 `suspend`；`FlowViewModel` 与面板都新增 `busy` 状态，
+按钮在调用期间禁用并显示「分析中…」。
 
-## 🟡 3. 同步调用要改异步
+解析仍同步：空输入与超长输入在**发请求之前**就被拒。
 
-现状：
+## ✅ 4. 输出结构约束与降级（已完成）
 
-```kotlin
-analyze: (String) -> AnalysisResult?      // 同步返回，失败给 null
-execute: (AnalysisResult, NextAction) -> ExecutedAction?
+`RemoteLlmService` 逐字段解析，缺失或类型错误走 `JSONObject` 的可选读取；整体解析失败时
+**回落本地引擎**，不会崩界面。
+
+失败一律回落：未配置、离线、超时、非 2xx、JSON 不合规。
+
+## ✅ 已验证（真机端到端，2026-09-19）
+
+用本机 stub 服务（`.tools/stub-relay.py`，**非产品代码**）实测：
+
+```
+[stub] task=state   bytes=133 auth=True    ← 应用发来的请求，带 Bearer 令牌
+[stub] task=actions bytes=155 auth=True
 ```
 
-真实 API 需要处理**加载中 / 超时 / 重试 / 流式返回**，面板目前只有一个 `error` 行，没有 loading 态。
+- 首页文案随配置切换为「上传分析 · 你主动提供的内容会发送至已配置的服务」
+- 分析结果来自 stub（话题「决赛材料提交」、动作「确认演示视频负责人」）
+- 清除配置后恢复「本机分析」，分析立刻返回本地结果，**日志中无任何网络记录**（完全未尝试联网）
 
-对应改动：`ConversationRepository` 与面板回调改为挂起函数或回调式；面板加加载与错误态。
+## ⏳ 5. 参赛材料（待用户确认）
 
-## 🟡 4. 输出结构要约束住
+**已有的加分项**：四条入口（分享 / 划词 / 截屏分析 / 悬浮球），划词可"选中即就地分析"。
 
-Mock 返回固定结构（话题 / 沟通状态 / 未解决 / 沟通信号 / 推荐下一步 / 候选回复 / 事项）。
-**真实模型不会自动守格式**，需 JSON schema 或结构化输出，否则界面会崩。
+**现状**：142 项测试 0 失败，Lint 0 问题；APK 22.16 MB（仅 arm64-v8a）。
 
-对应改动：定义响应 schema，解析失败时降级到通用模板而不是崩溃。
+**注意事项**：演示截图不得含真人聊天（见 [上线前必读](BEFORE_PUSHING.md)）。
 
-## 🟢 5. 参赛材料
+## 中转服务的响应格式
 
-**已有的加分项**：四条入口（分享 / 划词 / 截屏分析 / 悬浮球），其中划词可"选中即就地分析"。
+App 以 `POST` JSON 请求，`task` 决定期望的响应：
 
-**现状**：135 项测试 0 失败，Lint 0 问题；APK 22.12 MB（仅 arm64-v8a）。
+```jsonc
+// 请求
+{ "task": "state", "text": "老师：明天下午三点在 A203 开会…", "source": "TEXT" }
+// 响应
+{ "topic": "…", "stage": "DECISION", "goals": ["…"], "issues": ["…"],
+  "agreements": [], "disagreements": [], "signals": ["…"], "facts": ["…"] }
 
-**注意事项**：演示截图**不得含真人聊天**（见 [上线前必读](BEFORE_PUSHING.md)）；
-仓库只保留模拟器截图。
+// 请求 { "task": "actions", "topic": "…", "issues": [], "goals": [] }
+// 响应
+{ "actions": [ { "id": "a1", "title": "…", "description": "…",
+                 "type": "CLARIFY", "reason": "…", "priority": 1 } ] }
 
-**待确认（需要用户去查比赛规则）**：是否允许调用外部 API、是否要求说明数据流向。
+// 请求 { "task": "execute", "text": "…", "topic": "…", "action": "…", "actionType": "…" }
+// 响应
+{ "replies": [ { "style": "自然", "text": "…" } ], "note": "…" }
+```
 
----
+`stage` 取值：`OPENING` / `DISCUSSION` / `NEGOTIATION` / `DECISION` / `FOLLOW_UP` / `CLOSING` / `UNKNOWN`。
+`type` 取值见 `data/model/ActionType`。鉴权用 `Authorization: Bearer <访问令牌>`（可选）。
 
-## 建议顺序
+## 尚未做的
 
-**先做后端中转 + 同意弹窗，再接 API。** 顺序反了要回头改两遍文案与架构。
+- **中转服务的参考实现**：尚未提供（可在需要时补一份几十行的 Node 或 Python 示例）
+- **流式返回**：当前是「整段返回后显示」，未做逐字输出
+- **失败重试**：超时后直接回落本地，未做退避重试

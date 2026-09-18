@@ -6,8 +6,8 @@ android {
         applicationId = "com.flowai.communication"
         minSdk = 26
         targetSdk = 34
-        versionCode = 22
-        versionName = "1.0.0"
+        versionCode = 23
+        versionName = "1.0.1"
 
         ndk {
             // The bundled ML Kit OCR pipeline ships a 7-12 MB native library PER ABI; shipping all
@@ -21,7 +21,22 @@ android {
         // ~12 MB of native OCR library for no user.
         disable += "ChromeOsAbiSupport"
     }
-    buildFeatures { compose = true }
+    buildTypes {
+        debug {
+            // Lets a developer point the app at a relay running on their own machine, whose
+            // certificate story is not the point of the test. Release builds do not reference this
+            // config and stay https-only.
+            manifestPlaceholders["networkSecurityConfig"] = "@xml/network_security_config"
+        }
+        release {
+            manifestPlaceholders["networkSecurityConfig"] = ""
+        }
+    }
+    buildFeatures {
+        compose = true
+        // The remote engine gates cleartext-to-localhost on DEBUG, so it needs this class.
+        buildConfig = true
+    }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

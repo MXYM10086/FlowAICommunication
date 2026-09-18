@@ -1,7 +1,8 @@
-package com.flowai.communication.ai
+﻿package com.flowai.communication.ai
 
 import android.util.Log
 import com.flowai.communication.data.model.*
+import com.flowai.communication.BuildConfig
 import com.flowai.communication.domain.ChatToActionEngine
 import com.flowai.communication.domain.ConversationStateBuilder
 import com.flowai.communication.domain.NextActionEngine
@@ -81,9 +82,11 @@ class RemoteLlmService(
         return withContext(Dispatchers.IO) {
             runCatching {
                 val url = URL(settings.endpoint)
-                if (url.protocol != "https" && !url.host.isLocalAddress()) {
-                    // Conversation text is personal; refuse to send it in the clear.
-                    Log.w(TAG, "refusing non-https endpoint: ${url.protocol}")
+                if (!url.isSecureOrLocal()) {
+                    // Conversation text is private; refuse to send it in the clear. Debug builds
+                    // additionally permit RFC1918 addresses (see the debug network security config)
+                    // so a developer can point the app at a relay on their own machine.
+                    Log.w(TAG, "refusing cleartext endpoint: ${url.protocol}")
                     return@runCatching null
                 }
                 val connection = (url.openConnection() as HttpURLConnection).apply {
@@ -166,8 +169,22 @@ class RemoteLlmService(
         ActionType.entries.firstOrNull { it.name.equals(this, ignoreCase = true) }
             ?: ActionType.CLARIFY
 
-    private fun String.isLocalAddress(): Boolean =
-        this == "localhost" || this == "127.0.0.1" || this == "10.0.2.2" || endsWith(".local")
+    /**
+     * Whether the endpoint may receive conversation text.
+     *
+     * https is always allowed. Cleartext is allowed only to addresses that cannot leave the local
+     * network, and only in a debug build — the debug network security config is what actually
+     * permits the connection, so release builds remain https-only even if this check passed.
+     */
+    private fun URL.isSecureOrLocal(): Boolean {
+        if (protocol == "https") return true
+        if (protocol != "http") return false
+        if (!BuildConfig.DEBUG) return false
+        val h = host.orEmpty()
+        return h == "localhost" || h == "127.0.0.1" || h == "10.0.2.2" ||
+            h.startsWith("192.168.") || h.startsWith("10.") ||
+            h.matches(Regex("""172\.(1[6-9]|2\d|3[01])\..*"""))
+    }
 
     private companion object {
         const val TAG = "FlowAI"
