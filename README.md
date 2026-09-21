@@ -150,3 +150,4 @@ FlowAICommunication/
 ## 构建版本
 
 使用本机已有 AGP 8.3.2、Kotlin 1.9.24 和 Gradle 8.9，Compose Compiler 1.5.14、Compose BOM 2024.06.00。兼容依据：[Compose / Kotlin 对照表](https://developer.android.com/jetpack/androidx/releases/compose-kotlin)、[AGP 8.3](https://developer.android.com/build/releases/past-releases/agp-8-3-0-release-notes)。这些是固定构建版本，不代表最新版本。
+# FLOW-AI
