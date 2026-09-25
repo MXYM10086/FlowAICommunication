@@ -1,4 +1,4 @@
-﻿package com.flowai.communication.ai
+package com.flowai.communication.ai
 import com.flowai.communication.data.model.*
 import com.flowai.communication.data.repository.DemoConversations
 import com.flowai.communication.domain.ChatTurn
@@ -80,7 +80,10 @@ class MockLlmService : LlmService {
     override suspend fun execute(context: ContextCapsule, state: ConversationState, action: NextAction): ActionResult {
         require(action in recommend(state)) { "请从当前分析的推荐动作中选择" }
         if (action.type in listOf(ActionType.EXTRACT_TASK, ActionType.CREATE_EVENT)) {
-            if (!isDemo(context, DemoConversations.B)) return ActionResult(note = "当前 Mock 没有识别到可提取事项。请使用 Demo B 验证任务与事件流程。")
+            // Extraction is demo-only, and the Demo B button left the home page, so this branch is
+            // what every real input now reaches. The message says why nothing came back instead of
+            // sending the reader to a button that no longer exists.
+            if (!isDemo(context, DemoConversations.B)) return ActionResult(note = "当前 Mock 只在示例文本上产出任务与事件。")
             val event = ActionObject.Event("组会", "明天 15:00", "A203", listOf("老师", "小王", "小李"))
             val objects = if (action.type == ActionType.CREATE_EVENT) listOf(event) else listOf(
                 event, ActionObject.Task("准备 PPT", "小王", "今晚 22:00", "完成后发给老师"),

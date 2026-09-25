@@ -1,4 +1,4 @@
-﻿package com.flowai.communication.ui.action
+package com.flowai.communication.ui.action
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
@@ -43,7 +43,7 @@ import com.flowai.communication.ui.components.*
             OutlinedButton(onClick = { clipboard.setText(AnnotatedString(result.objects.joinToString("\n") { formatObject(it) })); copied = true }, modifier = Modifier.fillMaxWidth()) { Text("复制事项清单") }
         }
         if (copied) item { Text("已复制到剪贴板", color = MaterialTheme.colorScheme.primary) }
-        if (result.objects.isEmpty() && result.replies.isEmpty()) item { InfoCard("暂无可提取事项", listOf("返回首页，选择 Demo B 体验完整流程。")) }
+        if (result.objects.isEmpty() && result.replies.isEmpty()) item { InfoCard("暂无可提取事项", listOf("这段聊天里没有识别到任务或事件。")) }
     }
 }
 private fun formatObject(obj: ActionObject): String = when(obj) {

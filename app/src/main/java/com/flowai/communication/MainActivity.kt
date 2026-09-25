@@ -1,4 +1,4 @@
-﻿package com.flowai.communication
+package com.flowai.communication
 
 import android.content.Intent
 import android.graphics.BitmapFactory
@@ -41,6 +41,7 @@ import com.flowai.communication.ui.action.ActionScreen
 import com.flowai.communication.ui.chat.ChatScreen
 import com.flowai.communication.ui.components.EngineBadge
 import com.flowai.communication.ui.components.FlowTheme
+import com.flowai.communication.ui.help.HelpScreen
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -306,6 +307,10 @@ class MainActivity : ComponentActivity() {
                     // No session exists on the preview yet — it starts at confirmation — so there
                     // is nothing to "end"; the button just abandons the draft.
                     Page.OCR_PREVIEW -> "取消"
+                    // Side trips off the home page. They hold no session of their own and the way
+                    // out is always back the way you came, so "结束返回" would promise an ending
+                    // that does not happen on these three.
+                    Page.SETTINGS, Page.SKINS, Page.HELP -> "返回首页"
                     else -> "结束返回"
                 })
             }
@@ -333,7 +338,8 @@ class MainActivity : ComponentActivity() {
                     captureNotice = vm.captureNotice,
                     onRequestCapture = onRequestCapture,
                     onOpenSettings = vm::openSettings,
-                    onOpenSkins = vm::openSkins
+                    onOpenSkins = vm::openSkins,
+                    onOpenHelp = vm::openHelp
                 )
                 Page.INPUT -> InputScreen(
                     vm.input, vm.error, vm::edit, vm::analyze, vm.sourceType,
@@ -355,6 +361,7 @@ class MainActivity : ComponentActivity() {
                 } }
                 Page.SETTINGS -> com.flowai.communication.ui.settings.EngineSettingsScreen(vm::back)
                 Page.SKINS -> com.flowai.communication.ui.skins.PetSkinScreen(vm::back)
+                Page.HELP -> HelpScreen()
             }
             // Direct image analysis is a network call with nothing on screen to show for it —
             // without this the home page would just sit there until the model answers.

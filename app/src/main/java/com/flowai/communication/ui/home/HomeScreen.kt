@@ -1,230 +1,335 @@
-﻿package com.flowai.communication.ui.home
-import android.content.Intent
+package com.flowai.communication.ui.home
+
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import com.flowai.communication.ai.EngineSettingsStore
 import com.flowai.communication.data.repository.DemoConversations
-import com.flowai.communication.system.CaptureAccessibilityService
 import com.flowai.communication.system.FloatingAssistantService
 import com.flowai.communication.system.OverlayPermission
-import com.flowai.communication.system.pet.PetSkins
-import com.flowai.communication.system.pet.PrefsPetSkinStore
-import com.flowai.communication.ui.components.*
+import com.flowai.communication.ui.components.EngineNote
+import kotlin.math.min
 
+/**
+ * The home page: the app's two independent routes, stated side by side at equal size.
+ *
+ * There are exactly two ways to use FlowAI and neither depends on the other, so the page presents
+ * them as two large parallel cards rather than stacking them in a list the user has to scroll
+ * through to discover the second one:
+ *
+ *   A. text route   — paste or share a chat, read the state, pick a reply;
+ *   B. screen route — float the pet over the chat, frame the screen, get the result in place.
+ *
+ * The cards share every pixel left below the header (`weight(1f)` in a `fillMaxSize` column), so
+ * the page fits one screen at any height and never scrolls. Anything that is explanation rather
+ * than action lives on the help page ([com.flowai.communication.ui.help.HelpScreen]); only the
+ * transient session notices and the analysis-privacy strip stay, because both are claims the user
+ * must be able to see without navigating.
+ */
 @Composable fun HomeScreen(
     open: (String?) -> Unit,
     clearedNotice: String?,
     captureNotice: String? = null,
     onRequestCapture: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
-    onOpenSkins: () -> Unit = {}
+    onOpenSkins: () -> Unit = {},
+    onOpenHelp: () -> Unit = {}
 ) {
-    LazyColumn(Modifier.fillMaxSize().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = 720.dp),
-        contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-        item {
-            Text("让沟通有下一步", style = MaterialTheme.typography.headlineLarge)
-            Spacer(Modifier.height(8.dp))
-            Text("把一段聊天粘进来，先看懂沟通状态，再决定怎么回、怎么做。", style = MaterialTheme.typography.bodyLarge)
-        }
-        item { EngineNote() }
-        clearedNotice?.let { message -> item { InfoCard(message, listOf("原文、分析与回复已从本次会话移除。你主动复制的内容仍在剪贴板。")) } }
-        item {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                Column(Modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text("从这里开始", style = MaterialTheme.typography.titleLarge)
-                    Text("粘贴一段聊天，查看沟通状态和三个建议。")
-                    Button(onClick = { open(null) }, modifier = Modifier.fillMaxWidth()) { Text("粘贴聊天文本") }
-                }
+    val context = LocalContext.current
+    // Recomputed on resume so returning from the system permission screen shows the new state.
+    var granted by remember { mutableStateOf(OverlayPermission.isGranted(context)) }
+    var running by remember { mutableStateOf(FloatingAssistantService.isRunning) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                granted = OverlayPermission.isGranted(context)
+                running = FloatingAssistantService.isRunning
             }
         }
-        item {
-            Text("不知道怎么开始？先点一个示例试试", style = MaterialTheme.typography.titleMedium)
-            Text("示例会一键载入一段写好的聊天，照着点一遍就懂了。", style = MaterialTheme.typography.bodySmall)
-        }
-        item { OutlinedButton(onClick = { open(DemoConversations.A) }, modifier = Modifier.fillMaxWidth()) { Text("Demo A · 任务进度与回复") } }
-        item { OutlinedButton(onClick = { open(DemoConversations.B) }, modifier = Modifier.fillMaxWidth()) { Text("Demo B · 组会与任务提取") } }
-        item {
-            InfoCard("三步走", listOf(
-                "1. 粘贴一段聊天（每行一条消息）",
-                "2. 查看沟通状态和三个建议",
-                "3. 选一个建议，得到回复或任务 / 事件"
-            ))
-        }
-        item {
-            val context = LocalContext.current
-            // Recomputed on resume so returning from the system permission screen shows the new state.
-            var granted by remember { mutableStateOf(OverlayPermission.isGranted(context)) }
-            var running by remember { mutableStateOf(FloatingAssistantService.isRunning) }
-            val lifecycleOwner = LocalLifecycleOwner.current
-            DisposableEffect(lifecycleOwner) {
-                val observer = LifecycleEventObserver { _, event ->
-                    if (event == Lifecycle.Event.ON_RESUME) {
-                        granted = OverlayPermission.isGranted(context)
-                        running = FloatingAssistantService.isRunning
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
+        Column(
+            // Order matters: filling first would pin the width to the parent, and the 720dp cap
+            // would then be silently coerced away (coerceIn against a fixed incoming constraint),
+            // leaving tablets stretched edge to edge. Cap first, fill to that cap, let the Box
+            // centre the result.
+            Modifier.fillMaxHeight().widthIn(max = 720.dp).fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text("让沟通有下一步", style = MaterialTheme.typography.headlineMedium)
+            Text(
+                "两条路各自独立，选一条开始就行。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            clearedNotice?.let { Notice(it) }
+            captureNotice?.let { Notice(it) }
+
+            // The two routes take all remaining height, so neither can ever be pushed off screen.
+            Row(
+                Modifier.fillMaxWidth().weight(1f),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                RouteCard(
+                    eyebrow = "路径 A",
+                    title = "复制文本",
+                    summary = "粘贴或分享一段聊天，先看懂沟通状态，再决定怎么回。",
+                    accent = MaterialTheme.colorScheme.primary,
+                    glyph = Glyph.TEXT,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Button(onClick = { open(null) }, modifier = Modifier.fillMaxWidth()) {
+                        Text("粘贴聊天")
                     }
+                    OutlinedButton(
+                        onClick = { open(DemoConversations.A) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Demo A") }
                 }
-                lifecycleOwner.lifecycle.addObserver(observer)
-                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                RouteCard(
+                    eyebrow = "路径 B",
+                    title = "桌宠截图",
+                    summary = "让桌宠浮在聊天上方，框选屏幕内容，分析直接出来。",
+                    accent = MaterialTheme.colorScheme.secondary,
+                    glyph = Glyph.SCREEN,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    // One primary button whose meaning follows the permission/service state, so the
+                    // card never shows an action the user cannot take yet.
+                    when {
+                        !granted -> Button(
+                            onClick = { OverlayPermission.request(context) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("去授权") }
+
+                        running -> Button(
+                            onClick = {
+                                FloatingAssistantService.stop(context)
+                                running = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("关闭桌宠") }
+
+                        else -> Button(
+                            onClick = { running = FloatingAssistantService.start(context) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("开启桌宠") }
+                    }
+                    OutlinedButton(
+                        onClick = onRequestCapture,
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("截屏分析") }
+                }
             }
 
-            InfoCard(
-                "悬浮桌宠",
-                listOf(
-                    if (!granted) "需要先在系统设置里允许「显示在其他应用上层」。"
-                    else if (running) "桌宠已开启，可在其他应用上方随时点开 FlowAI。"
-                    else "已获得权限，可以开启桌宠。",
-                    "桌宠只作为入口，不会自动读取任何聊天内容。",
-                    // Reinstalling the app clears this permission on some ROMs, which looks like the
-                    // pet silently vanished; say so instead of leaving the user guessing.
-                    if (!granted) "提示：重新安装应用后该权限可能会被系统清除，需要重新授权。"
-                    else ""
-                ).filter { it.isNotEmpty() }
-            )
-            Spacer(Modifier.height(8.dp))
-            if (!granted) {
-                Button(
-                    onClick = { OverlayPermission.request(context) },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("去系统设置授权") }
-            } else {
-                Button(
-                    onClick = {
-                        if (running) {
-                            FloatingAssistantService.stop(context)
-                            running = false
-                        } else {
-                            running = FloatingAssistantService.start(context)
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text(if (running) "关闭桌宠" else "开启桌宠") }
-                Spacer(Modifier.height(6.dp))
-                // Same panel the pet opens, reachable without the overlay.
-                OutlinedButton(
-                    onClick = { FloatingAssistantService.openPanel(context) },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("打开助手面板") }
-                Spacer(Modifier.height(6.dp))
-                // 三风格回复卡片测试入口：overlay 窗口无法由 adb 注入触摸，桌宠单击只能人工
-                // 触发，验收（拖拽/吸边/最小化/复制）需要一个能点的入口。阶段 1 弹样例文本。
-                OutlinedButton(
-                    onClick = { FloatingAssistantService.showTestCard(context) },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("测试回复卡片（样例文本）") }
-                Spacer(Modifier.height(6.dp))
-                // 桌宠一键的等价入口（overlay 触摸无法 adb 注入）：截屏 → 本机 OCR → 卡片。
-                OutlinedButton(
-                    onClick = { FloatingAssistantService.startCardCapture(context) },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("截屏识别 → 回复卡片") }
+            EngineNote()
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
+                TextButton(onClick = onOpenSkins) { Text("桌宠皮肤") }
+                TextButton(onClick = onOpenHelp) { Text("使用说明") }
+                TextButton(onClick = onOpenSettings) { Text("引擎设置") }
             }
         }
-        item {
-            val context = LocalContext.current
-            val store = remember { PrefsPetSkinStore(context.applicationContext) }
-            // Re-read on resume so the row reflects a skin chosen on the picker screen.
-            var skin by remember { mutableStateOf(PetSkins.byId(store.load())) }
-            val lifecycleOwner = LocalLifecycleOwner.current
-            DisposableEffect(lifecycleOwner) {
-                val observer = LifecycleEventObserver { _, event ->
-                    if (event == Lifecycle.Event.ON_RESUME) skin = PetSkins.byId(store.load())
-                }
-                lifecycleOwner.lifecycle.addObserver(observer)
-                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-            }
-            InfoCard(
-                "桌宠皮肤",
-                listOf(
-                    "桌宠会自己眨眼、蹦跳、摇摆、转圈、打盹；点它有粒子特效，长按可以直接换下一款。",
-                    "当前皮肤：${skin.name}"
+    }
+}
+
+/** Which picture a route card draws. */
+private enum class Glyph { TEXT, SCREEN }
+
+/**
+ * One of the two routes, as a tall card that shares the page with its sibling.
+ *
+ * Because the cards absorb every spare pixel, a phone with a tall screen leaves a lot of room
+ * between the summary and the buttons. The glyph is what fills it: at tablet width the card can be
+ * ~570dp tall against ~280dp of text and buttons, and that much blank space reads as an unfinished
+ * layout. It is drawn rather than shipped — the app carries no image assets (the desk pet and the
+ * skin previews are Canvas too) — so the picture costs nothing in APK size.
+ *
+ * All the slack goes to one `weight(1f)` box holding the glyph. A `Column` measures its fixed
+ * children first and hands the weighted one only the remainder, so the labels and the action stack
+ * always get their full intrinsic height and the decorative glyph is the thing that yields — down
+ * to nothing on a short screen. An earlier version gave the slack to two `weight(1f)` spacers
+ * instead; when the content was taller than the card those spacers collapsed to zero and the action
+ * stack was pushed past the `Card`'s clip, which is how the buttons vanished on shorter screens
+ * while the labels stayed visible. The summary is capped at two lines for the same reason: text
+ * that cannot grow can never take the buttons' space.
+ */
+@Composable private fun RouteCard(
+    eyebrow: String,
+    title: String,
+    summary: String,
+    accent: Color,
+    glyph: Glyph,
+    modifier: Modifier = Modifier,
+    actions: @Composable ColumnScope.() -> Unit
+) {
+    Card(
+        modifier = modifier.fillMaxHeight(),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        // The card gets whatever height is left after the header, the notices and the footer row,
+        // and that varies a lot — a tall phone leaves ~600dp, a short or font-scaled screen far
+        // less. Measuring it here is what makes the layout independent of any guess about the
+        // device. Below the threshold the summary drops to one line and the spacing tightens: at
+        // that size the labels and the buttons alone nearly fill the card, and the second line of
+        // explanation is the cheapest thing to give up — a button never is.
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val compact = maxHeight < 260.dp
+            Column(
+                Modifier.fillMaxSize().padding(if (compact) 10.dp else 14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(if (compact) 4.dp else 6.dp)
+            ) {
+                Text(
+                    eyebrow,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = accent,
+                    fontWeight = FontWeight.SemiBold
                 )
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(onClick = onOpenSkins, modifier = Modifier.fillMaxWidth()) {
-                Text("选择桌宠皮肤")
-            }
-        }
-        item {
-            val context = LocalContext.current
-            val lifecycleOwner = LocalLifecycleOwner.current
-            // Re-read on resume: the service is enabled in system settings and reports back here.
-            var silent by remember { mutableStateOf(CaptureAccessibilityService.isRunning) }
-            // Recognition always happens on device; the engine only decides where the recognised
-            // text is analysed — remotely when configured and agreed to, locally otherwise.
-            var remote by remember {
-                mutableStateOf(EngineSettingsStore(context).load().canUseRemote)
-            }
-            DisposableEffect(lifecycleOwner) {
-                val observer = LifecycleEventObserver { _, event ->
-                    if (event == Lifecycle.Event.ON_RESUME) {
-                        silent = CaptureAccessibilityService.isRunning
-                        remote = EngineSettingsStore(context).load().canUseRemote
-                    }
+                Text(title, style = MaterialTheme.typography.titleLarge)
+                Text(
+                    summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = if (compact) 1 else 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Box(
+                    Modifier.weight(1f).fillMaxWidth(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    RouteGlyph(
+                        glyph,
+                        accent,
+                        Modifier.sizeIn(maxWidth = 104.dp, maxHeight = 104.dp).fillMaxSize()
+                    )
                 }
-                lifecycleOwner.lifecycle.addObserver(observer)
-                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-            }
-            InfoCard("截屏分析（测试版）", listOf(
-                "点桌宠一键截屏，或在当前界面框选聊天区域后确认。",
-                "框选确认后先在本机识别截屏中的聊天文字，再把文字交给模型分析；截屏图片不离开手机。",
-                if (remote) "远程模型已配置：识别出的文字上传分析（你已同意上传）。"
-                else "尚未配置远程模型：识别出的文字在本机分析。",
-                "桌宠一键截屏的分析与回复直接出现在悬浮面板，不离开聊天应用；下面的按钮则在主界面出结果。",
-                "只截取你框选的区域；截屏帧用完立即释放，不会持续录屏。",
-                "开启桌宠时会先请求一次屏幕共享；共享开启后框选确认立即截屏，无授权弹窗。",
-                if (silent) "已开启静音截屏：框选确认后直接出结果，无授权弹窗。"
-                else "未开启屏幕共享或静音截屏时，系统每次截屏都会弹一次授权框。"
-            ))
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = onRequestCapture,
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("截屏分析聊天内容") }
-            if (!silent) {
-                Spacer(Modifier.height(6.dp))
-                // One-time system setup; afterwards captures need no consent dialog at all.
-                OutlinedButton(
-                    onClick = {
-                        runCatching {
-                            context.startActivity(
-                                Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
-                            )
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("开启静音截屏（免授权弹窗）") }
-            }
-            Text(
-                "分析结果直接进入同一个会话流程。",
-                style = MaterialTheme.typography.bodySmall
-            )
-            captureNotice?.let {
-                Spacer(Modifier.height(8.dp))
-                InfoCard("提示", listOf(it))
+                actions()
             }
         }
-        item {
-            OutlinedButton(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) {
-                Text("分析引擎设置")
-            }
-            Text(
-                "默认在本机分析，聊天内容不离开手机。也可以填写自己的分析服务地址，让内容上传分析（需另行同意）。",
-                style = MaterialTheme.typography.bodySmall
+    }
+}
+
+/**
+ * The route's picture: a chat bubble for the text route, the desk pet's head for the screen route.
+ *
+ * Everything is a fraction of the square's side, so the glyph stays correct at any size, and both
+ * are single-tone outlines in the card's accent colour — no second colour is needed, which keeps
+ * them legible on the white card without the kernel knowing its background.
+ */
+@Composable private fun RouteGlyph(kind: Glyph, tint: Color, modifier: Modifier = Modifier) {
+    Canvas(modifier) {
+        // Draw inside the largest centred square rather than the raw box: this glyph sits in the
+        // slot that absorbs whatever height the card has left, so on a short screen it can be
+        // handed a slot wider than it is tall, and using the box's own width and height there
+        // would squash it.
+        val side = min(size.width, size.height)
+        translate((size.width - side) / 2f, (size.height - side) / 2f) {
+            drawRouteGlyph(kind, tint, side)
+        }
+    }
+}
+
+/** [RouteGlyph]'s actual drawing, in a square of side `s`. */
+private fun DrawScope.drawRouteGlyph(kind: Glyph, tint: Color, s: Float) {
+    when (kind) {
+        // A rounded speech bubble with a tail and three lines of "text".
+        Glyph.TEXT -> {
+            val stroke = s * 0.055f
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(s * 0.06f, s * 0.12f),
+                size = Size(s * 0.88f, s * 0.62f),
+                cornerRadius = CornerRadius(s * 0.20f),
+                style = Stroke(width = stroke)
+            )
+            drawPath(
+                Path().apply {
+                    moveTo(s * 0.26f, s * 0.73f)
+                    lineTo(s * 0.21f, s * 0.94f)
+                    lineTo(s * 0.44f, s * 0.73f)
+                    close()
+                },
+                color = tint
+            )
+            // Ragged right edge on the last line, so it reads as prose and not as a table.
+            drawLine(tint, Offset(s * 0.22f, s * 0.30f), Offset(s * 0.78f, s * 0.30f), stroke, StrokeCap.Round)
+            drawLine(tint, Offset(s * 0.22f, s * 0.44f), Offset(s * 0.78f, s * 0.44f), stroke, StrokeCap.Round)
+            drawLine(tint, Offset(s * 0.22f, s * 0.58f), Offset(s * 0.58f, s * 0.58f), stroke, StrokeCap.Round)
+        }
+        // The desk pet's head: two ears behind a rounded face, eyes and a smile in front.
+        Glyph.SCREEN -> {
+            val stroke = s * 0.055f
+            drawCircle(tint, s * 0.11f, Offset(s * 0.27f, s * 0.21f))
+            drawCircle(tint, s * 0.11f, Offset(s * 0.73f, s * 0.21f))
+            drawRoundRect(
+                color = tint,
+                topLeft = Offset(s * 0.11f, s * 0.22f),
+                size = Size(s * 0.78f, s * 0.64f),
+                cornerRadius = CornerRadius(s * 0.27f),
+                style = Stroke(width = stroke)
+            )
+            drawCircle(tint, s * 0.055f, Offset(s * 0.34f, s * 0.50f))
+            drawCircle(tint, s * 0.055f, Offset(s * 0.66f, s * 0.50f))
+            drawArc(
+                color = tint,
+                startAngle = 25f,
+                sweepAngle = 130f,
+                useCenter = false,
+                topLeft = Offset(s * 0.38f, s * 0.57f),
+                size = Size(s * 0.24f, s * 0.17f),
+                style = Stroke(width = stroke, cap = StrokeCap.Round)
             )
         }
-        item { InfoCard("内容只用于本次会话", listOf(
-            "结束或返回首页后清除，不保留最近分析。",
-            "切到后台时，会话可暂留内存供继续操作；请在完成后主动结束。",
-            "应用进程重建后需要重新导入聊天。"
-        )) }
+    }
+}
+
+/**
+ * A transient session message ("本次内容已清除", a capture failure reason).
+ *
+ * Deliberately a thin strip rather than the full [com.flowai.communication.ui.components.InfoCard]
+ * the older list-style page used: it appears and disappears, and the home page has no room to
+ * spend a title row on it.
+ */
+@Composable private fun Notice(text: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.secondaryContainer,
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Text(
+            text,
+            Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+            style = MaterialTheme.typography.bodySmall,
+            // A capture failure reason can be long. Left unbounded it would wrap to several lines
+            // and eat the route cards' height, which is the one thing this page cannot spare.
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }

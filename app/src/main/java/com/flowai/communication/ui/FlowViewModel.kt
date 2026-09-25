@@ -355,9 +355,9 @@ class FlowViewModel(
             // Leaving the preview discards the draft: it is a capture scratchpad, and no session
             // has started yet, so there is nothing for endSession to clear.
             Page.OCR_PREVIEW -> { ocrDraft = ""; page = Page.HOME }
-            // Settings and the desk-pet picker are side trips: leaving them returns home without
-            // touching the session.
-            Page.SETTINGS, Page.SKINS, Page.HOME -> page = Page.HOME
+            // Settings, the desk-pet picker and the help page are side trips: leaving them returns
+            // home without touching the session.
+            Page.SETTINGS, Page.SKINS, Page.HELP, Page.HOME -> page = Page.HOME
         }
     }
 
@@ -366,6 +366,9 @@ class FlowViewModel(
 
     /** Opens the desk-pet skin picker. */
     fun openSkins() { page = Page.SKINS }
+
+    /** Opens the help page that holds the home page's explanatory overflow. */
+    fun openHelp() { page = Page.HELP }
 
     fun endSession() {
         capture.end(CaptureEndReason.USER_ENDED)
