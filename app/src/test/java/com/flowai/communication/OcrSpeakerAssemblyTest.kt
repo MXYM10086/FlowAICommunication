@@ -3,6 +3,7 @@ package com.flowai.communication
 import com.flowai.communication.system.OcrLine
 import com.flowai.communication.system.OcrTextAssembler
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -17,8 +18,8 @@ class OcrSpeakerAssemblyTest {
 
     private val width = 1000
 
-    private fun line(text: String, left: Int, right: Int, top: Int = 0) =
-        OcrLine(text = text, left = left, top = top, right = right, bottom = top + 40)
+    private fun line(text: String, left: Int, right: Int, top: Int = 0, confidence: Float = 1f) =
+        OcrLine(text = text, left = left, top = top, right = right, bottom = top + 40, confidence = confidence)
 
     @Test
     fun `right aligned line is attributed to me`() {
@@ -97,6 +98,78 @@ class OcrSpeakerAssemblyTest {
             imageWidth = 0
         )
         assertEquals("今天能交吗", out)
+    }
+
+    @Test
+    fun `low confidence lines are dropped as noise`() {
+        val out = OcrTextAssembler.assembleWithSpeakers(
+            listOf(
+                line("锟斤拷烫烫烫", left = 60, right = 280, top = 0, confidence = 0.35f),
+                line("今天能交吗", left = 60, right = 280, top = 100)
+            ),
+            width
+        )
+        assertEquals("对方：今天能交吗", out)
+    }
+
+    @Test
+    fun `assemble also drops sub-threshold lines`() {
+        val out = OcrTextAssembler.assemble(
+            listOf(
+                line("%%%%", left = 0, right = 100, top = 0, confidence = 0.2f),
+                line("正常的一行文字", left = 0, right = 300, top = 50)
+            )
+        )
+        assertEquals("正常的一行文字", out)
+    }
+
+    @Test
+    fun `short lines survive only with high confidence`() {
+        val out = OcrTextAssembler.assembleWithSpeakers(
+            listOf(
+                line("收到", left = 700, right = 800, top = 0, confidence = 0.7f),
+                line("好的", left = 700, right = 800, top = 100, confidence = 0.85f)
+            ),
+            width
+        )
+        assertEquals("我：好的", out)
+    }
+
+    @Test
+    fun `whole-line timestamps and system notices are dropped as chrome`() {
+        val out = OcrTextAssembler.assembleWithSpeakers(
+            listOf(
+                line("14:30", left = 60, right = 160, top = 0),
+                line("昨天", left = 60, right = 120, top = 50),
+                line("周一", left = 60, right = 120, top = 100),
+                line("对方正在输入...", left = 60, right = 300, top = 150),
+                line("今天能交吗", left = 60, right = 280, top = 200)
+            ),
+            width
+        )
+        assertEquals("对方：今天能交吗", out)
+    }
+
+    @Test
+    fun `a timestamp inside a real message does not make it noise`() {
+        val out = OcrTextAssembler.assembleWithSpeakers(
+            listOf(
+                line("明天14:30开会", left = 60, right = 320, top = 0),
+                line("好的明天见", left = 700, right = 880, top = 100)
+            ),
+            width
+        )
+        assertEquals("对方：明天14:30开会\n我：好的明天见", out)
+    }
+
+    @Test
+    fun `isNoiseLine matches whole lines only`() {
+        assertTrue(OcrTextAssembler.isNoiseLine("14:30"))
+        assertTrue(OcrTextAssembler.isNoiseLine("昨天"))
+        assertTrue(OcrTextAssembler.isNoiseLine("周一"))
+        assertTrue(OcrTextAssembler.isNoiseLine("对方正在输入..."))
+        assertFalse(OcrTextAssembler.isNoiseLine("明天14:30开会"))
+        assertFalse(OcrTextAssembler.isNoiseLine("好的明天见"))
     }
 
     @Test

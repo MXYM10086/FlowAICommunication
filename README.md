@@ -33,6 +33,8 @@ Kotlin + Jetpack Compose Android 产品逻辑 MVP，包名 `com.flowai.communica
 
 **真机验收**（Android 16 / Redmi，2026-09-19）见 [真机验收记录](docs/verification/DEVICE_ACCEPTANCE.md)：8 条路径中 7 条自动通过、旋转由人工确认；并记录了两处真机才暴露的问题（深色模式下保持亮色、2.0x 字体下顶栏标题换行）。
 
+**当前构建（1.1.0，截屏"先识别文字再分析"改版后）全功能验证**见 [当前构建全功能验证记录](docs/verification/FEATURE_VERIFICATION.md)：8 条验收路径 + V2 入口（桌宠 / 皮肤 / 助手面板 / 截屏 / 远程模型配置）逐条复核，`163` 项单测全过、Lint 0 错误；并从载荷层面确认截屏图片不再上传、只分析本机识别出的文字。
+
 ### 分享文本不会被重复导入
 
 进程被杀后任务被重建时，Android 会从任务记录里重新投递原始的 `SEND` intent（含 `EXTRA_TEXT`），因此聊天原文有可能被再次导入——这与"进程重建后不恢复内容"的约定冲突。实测确认：把 extra 从 `getIntent()` 上移除**不能**解决，因为任务记录仍保留原始 intent。
@@ -59,10 +61,10 @@ Kotlin + Jetpack Compose Android 产品逻辑 MVP，包名 `com.flowai.communica
 
 悬浮助手、截屏 OCR、无障碍、输入法的平台约束、开源参照与推荐实施顺序见 [V2 技术路线](docs/V2_TECH_ROADMAP.md)。
 
-### 悬浮入口与会话生命周期（V2 增量）
+### 悬浮入口：桌宠（V2 增量）
 
 - **会话生命周期**：`domain/CaptureSession.kt` 把 Just-in-Time Context 落成状态机（`IDLE`/`ACTIVE`/`EXPIRED`），所有入口共用。纯 Kotlin、无 Android 依赖、时间可注入，因此超时与释放行为可单测。结束原因区分 `USER_ENDED`/`TIMED_OUT`/`SUPERSEDED`。
-- **悬浮球**：`system/FloatingAssistantService` —— 前台服务 + 常驻通知，点击只把应用切到前台。**它只作为入口，不会自动读取任何内容**。需要 `SYSTEM_ALERT_WINDOW`（在系统设置页授予，首页有引导）。
+- **桌宠**：`system/pet/`（`PetSkin` / `PetSkinStore` / `PetView`）—— 悬浮入口是一只用 Canvas 程序化绘制的桌宠，零图片资源，不增加 APK 体积。点它打开助手面板并播放粒子爆发 + 光波的点击特效；空闲时会自己做动作（眨眼、蹦跳、摇摆、拉伸、转圈、打盹、冒爱心）。长按桌宠循环切换皮肤（共 6 款，默认「小蓝团」），选择会持久化；应用首页可打开带预览的皮肤选择页，选择立即应用到运行中的桌宠。**桌宠只作为入口，不会自动读取任何内容**。需要 `SYSTEM_ALERT_WINDOW`（在系统设置页授予，首页有引导）。
 - 已知平台限制：系统「设置」等安全敏感界面会隐藏非系统覆盖窗口，"分享"与"划词"入口因此必须保留。
 
 ### 截屏识别（V2 增量，测试版）
@@ -75,9 +77,21 @@ Kotlin + Jetpack Compose Android 产品逻辑 MVP，包名 `com.flowai.communica
 - **体积**：APK 约 **22 MB**（只发 arm64-v8a；捆绑 OCR 原生库每 ABI 要 7–12 MB，因此不打包其他 ABI）。
 - 已知限制：`FLAG_SECURE` 界面（网银、部分视频）会截出黑屏，不做绕过；小字有误识别；只识别当前屏，暂不做滚动拼接。
 
+### 三风格回复卡片（V2 增量，DeepSeek 在线）
+
+点桌宠一键（或首页「截屏识别 → 回复卡片」）→ 框选/整屏截屏 → **本机 OCR 只取纯文本** → DeepSeek 串行生成三条回复（温暖 / 毒舌 / 冷静科学）→ 悬浮回复卡片浮在聊天应用上方，逐条打字机呈现、各自可复制。用户全程不离开当前对话。
+
+- **隐私不变式：原图绝不上传**。截屏 PNG 只在本机解码给 OCR，识别完立即删除缓存文件；提交给 API 的只有 OCR 纯文本（截 6000 字）+ 固定人设 system prompt。卡片底部常驻该说明。
+- **三人设**：`ai/AiStyle.kt` 固定三个实例（温柔共情 / 幽默犀利但文明 / 理性客观不带情绪），顺序固定、串行请求（不并发），头部显示「正在生成 n/3…」；某一路失败只该区块显示友好原因 + 「重试这一条」，不拖死后续风格。
+- **取消语义**：关闭卡片（×）或悬浮服务销毁 → 协程 Job 取消 → OkHttp 在途请求立即 cancel；最小化**不**取消（结果还在，点桌宠即恢复）。APP 退后台不取消——卡片本就悬浮在其他应用上方使用。
+- **窗口纪律**：`TYPE_APPLICATION_OVERLAY` + 不加 `FLAG_LAYOUT_NO_LIMITS`，系统自动避开状态栏/挖孔；拖拽松手按卡片中心吸边回弹；淡入淡出 200ms；点击卡片外部不关闭（误触丢失代价高）。
+- **失败兜底**：401/403→Key 无效、429→限流、5xx→服务不可用、超时/网络异常/响应格式异常均有友好文案；未配置远程模型或未同意上传时不发起请求。全部捕获、不崩溃。
+- **与面板的分工**：卡片接管桌宠一键（截屏→OCR→三风格回复）；助手面板保留粘贴/手动分析/追问聊天入口，截屏分析旧路径不变。
+- 验收记录与截图（37–42）见 [回复卡片功能核验报告](docs/verification/REPLY_CARD_FEATURE.md)。
+
 ### 已知的平台限制（实测）
 
-- **悬浮球在微信里不可见**：微信声明并获得了 `HIDE_OVERLAY_WINDOWS`，系统会隐藏其窗口上方的非系统覆盖窗口。因此**分享入口与划词入口是必需的**，不能只靠悬浮球。
+- **桌宠在微信里不可见**：微信声明并获得了 `HIDE_OVERLAY_WINDOWS`，系统会隐藏其窗口上方的非系统覆盖窗口。因此**分享入口与划词入口是必需的**，不能只靠桌宠。
 - **无障碍读不到微信**：实测微信不向无障碍框架暴露任何界面内容（同一探针读计算器有 160 个节点、读微信为零）。**无障碍路线已否决**，详见 [PoC 结论](docs/verification/A11Y_READABILITY_POC.md)。
 
 ## 架构
@@ -90,7 +104,7 @@ Kotlin + Jetpack Compose Android 产品逻辑 MVP，包名 `com.flowai.communica
 
 解析约定：每个非空行一条消息，支持中文或英文冒号；“我/自己/me”映射为 ME，其余前两个不同标签映射 OTHER / OTHER_2，更多标签或无标签映射 UNKNOWN。数字时间和 HTTP URL 不作说话人前缀。当前固定模型不保存真实姓名，人物姓名仅出现在原文和 Demo 任务字段中；复杂聊天导出格式尚不支持。
 
-`system/` 仅含接口与 Stub，返回 null / false；Manifest 没有系统权限、Service 或分享 intent-filter。截图入口明确禁用。SkillRegistry 仅预留扩展边界，未引入技能执行框架。
+`system/` 承载 V2 平台入口：分享 / 划词 / 截屏 / 区域框选 / 助手面板窗口，以及悬浮桌宠（`system/pet/`）。`OverlayContextProvider`、`AccessibilityContextProvider`、`ScreenCaptureProvider`、`ShareReceiver` 为接口级预留。SkillRegistry 仅预留扩展边界，未引入技能执行框架。
 
 ## 文件树
 
@@ -117,26 +131,30 @@ FlowAICommunication/
         │       │                   NextActionEngine, ChatToActionEngine,
         │       │                   ConsumedShareStore, SharedText        │       ├── ai/             LlmService, MockLlmService, prompts/
         │       ├── skill/          Skill, SkillRegistry, builtin/
-        │       ├── system/         OverlayContextProvider, AccessibilityContextProvider,
-        │       │                   ScreenCaptureProvider, ShareReceiver (均有 Stub)
+        │       ├── system/         分享/划词/截屏入口、区域框选、助手面板窗口、
+        │       │                   pet/（桌宠皮肤与动画）
         │       └── ui/
         │           ├── FlowViewModel.kt
         │           ├── home/       HomeScreen, InputScreen
         │           ├── analysis/   AnalysisScreen
         │           ├── action/     ActionScreen
+        │           ├── panel/      AssistantPanel
+        │           ├── settings/   EngineSettingsScreen
+        │           ├── skins/      PetSkinScreen
         │           └── components/ Components
         └── test/java/com/flowai/communication/
-            ├── FlowEngineTest.kt
-            ├── FlowSessionTest.kt
-            ├── ShareConsumptionTest.kt
-            └── SharedTextTest.kt
+            ├── FlowEngineTest.kt / FlowSessionTest.kt
+            ├── ShareConsumptionTest.kt / SharedTextTest.kt
+            ├── CaptureSessionTest.kt / CaptureRegionTest.kt
+            ├── OcrSpeakerAssemblyTest.kt / RemoteEngineFallbackTest.kt
+            └── system/pet/PetSkinTest.kt
 ```
 
 ## 已完成与边界
 
-完整实现首页、文本导入、状态展示、Top-3 动作、回复生成和编辑复制、Task/Event 提取页面、系统分享文本入口、两个 Demo、模型和 Engine 基础测试。
+完整实现首页、文本导入、状态展示、Top-3 动作、回复生成和编辑复制、Task/Event 提取页面、系统分享文本入口、悬浮桌宠与皮肤、截屏 OCR 入口、两个 Demo、模型和 Engine 基础测试。
 
-没有实现登录、数据库、语音、RAG、长期记忆、多模型、OCR 或自动发消息。任务和事件均为草稿，不写入外部应用；相对时间保持原样，未绑定具体日期。测试结果见 TEST_RESULTS.md。
+没有实现登录、数据库、语音、RAG、长期记忆、多模型或自动发消息。任务和事件均为草稿，不写入外部应用；相对时间保持原样，未绑定具体日期。测试结果见 TEST_RESULTS.md。
 
 ## 下一阶段
 

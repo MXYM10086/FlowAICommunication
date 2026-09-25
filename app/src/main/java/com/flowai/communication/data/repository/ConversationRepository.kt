@@ -6,7 +6,8 @@ class ConversationRepository(
     private val parser: DialogueParser,
     private val builder: ConversationStateBuilder,
     private val nextActions: NextActionEngine,
-    private val actionEngine: ChatToActionEngine
+    private val actionEngine: ChatToActionEngine,
+    private val chatEngine: AnalysisChatEngine
 ) {
     // Stateless: callers own the current result; no history retains past contexts.
     //
@@ -22,6 +23,34 @@ class ConversationRepository(
         val result = AnalysisResult(context, state, nextActions.recommend(state).sortedBy { it.priority }.take(3))
         return result
     }
+
+    /**
+     * Analyses a chat screenshot directly: the engine reads the conversation out of the image.
+     *
+     * There is deliberately no parsing step — no local text exists yet — so the text guards of
+     * [analyze] do not apply and the capsule carries the image instead of messages. Only a
+     * vision-capable remote engine can serve this; the caller decides when to take this path.
+     */
+    suspend fun analyzeScreenshot(imageBase64: String): AnalysisResult {
+        require(imageBase64.isNotBlank()) { "截屏内容为空，请重新截取" }
+        val context = ContextCapsule(
+            SourceType.SCREENSHOT, messages = emptyList(), imageBase64 = imageBase64
+        )
+        val state = builder.build(context)
+        return AnalysisResult(context, state, nextActions.recommend(state).sortedBy { it.priority }.take(3))
+    }
+
+    /**
+     * One follow-up question about a finished analysis, answered in the context of that analysis.
+     *
+     * [history] holds the turns *preceding* [question] — engines append the question themselves,
+     * so passing it inside the history too would send it twice.
+     *
+     * No guards here: the question is free prose addressed to the model, and the grounding (the
+     * capsule and the state) already went through [analyze] or [analyzeScreenshot] once.
+     */
+    suspend fun chat(result: AnalysisResult, history: List<ChatTurn>, question: String): String =
+        chatEngine.chat(result.capsule, result.state, history, question)
 
     suspend fun execute(result: AnalysisResult, action: NextAction): ActionResult {
         require(action in result.actions) { "动作不属于当前分析" }

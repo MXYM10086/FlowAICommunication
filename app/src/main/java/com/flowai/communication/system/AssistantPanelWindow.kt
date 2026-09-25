@@ -2,6 +2,7 @@
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.graphics.PixelFormat
 import android.util.Log
 import android.view.Gravity
@@ -21,6 +22,7 @@ import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
+import androidx.lifecycle.lifecycleScope
 import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
@@ -29,7 +31,10 @@ import com.flowai.communication.ai.EngineSettingsStore
 import com.flowai.communication.ai.LlmService
 import com.flowai.communication.data.model.*
 import com.flowai.communication.data.repository.ConversationRepository
+import com.flowai.communication.domain.AnalysisChatEngine
+import com.flowai.communication.domain.ChatRole
 import com.flowai.communication.domain.ChatToActionEngine
+import com.flowai.communication.domain.ChatTurn
 import com.flowai.communication.domain.ConversationStateBuilder
 import com.flowai.communication.domain.NextActionEngine
 import com.flowai.communication.domain.PlainTextDialogueParser
@@ -37,15 +42,20 @@ import com.flowai.communication.ui.components.FlowTheme
 import com.flowai.communication.ui.panel.AssistantPanel
 import com.flowai.communication.ui.panel.AssistantPanelState
 import com.flowai.communication.ui.panel.ExecutedAction
+import java.io.File
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * The in-place assistant window.
  *
  * This is the product's "assistant inside the chat app" surface: it floats above whatever the user
  * is looking at, takes text the user pastes or shares, and shows the analysis without switching
- * apps. It deliberately does not read the screen — with `screen_share_protection` on (HyperOS
- * default), capture of the chat app returns black frames, and silently reading another app's
- * content would contradict the product's Just-in-Time Context rule anyway.
+ * apps. Screen capture is strictly user-triggered: the panel hides itself first so it never ends up
+ * in the frame, and the frame is analysed where it lands ([FrameAnalysis]) with the picture
+ * released straight after.
  *
  * Compose inside a WindowManager overlay needs its own lifecycle/saved-state owners; that plumbing
  * lives here so the panel itself stays a plain composable.
@@ -65,7 +75,7 @@ class AssistantPanelWindow(
 
     /** Repository is shared with the app's flow so results stay identical. */
     private val engine = ConfigurableEngine(context)
-    private val repository = ConversationRepository(PlainTextDialogueParser(), engine, engine, engine)
+    private val repository = ConversationRepository(PlainTextDialogueParser(), engine, engine, engine, engine)
 
     override val lifecycle: Lifecycle get() = lifecycleRegistry
     override val viewModelStore: ViewModelStore get() = store
@@ -116,6 +126,9 @@ class AssistantPanelWindow(
 
     /** True while the panel is off screen but still alive. */
     private var suspended = false
+
+    /** Lets the pet ignore taps while a capture it started is still in flight. */
+    val isSuspended: Boolean get() = suspended
 
     /** Set by a capture that is in flight / has returned, and read by the panel. */
     private val capturedText = mutableStateOf<String?>(null)
@@ -249,18 +262,47 @@ class AssistantPanelWindow(
             analyze = { text ->
                 runCatching { repository.analyze(text, SourceType.TEXT) }.getOrNull()
             },
-            execute = { analysis, action ->
-                runCatching { repository.execute(analysis, action) }
-                    .map { ExecutedAction(action.id, it.replies, it.objects, it.note) }
-                    .getOrNull()
-            },
+            execute = { analysis, action -> runExecute(analysis, action) },
             onClose = { destroy() },
             onOpenApp = { openFullApp() },
             // Must go through beginCapture so the panel hides itself before the frame is taken.
             onCapture = { beginCapture() },
             capturedText = capturedText.value,
-            captureFailure = captureFailure.value
+            captureFailure = captureFailure.value,
+            onChat = ::sendChat
         )
+    }
+
+    /** One action executed against one analysis; null when the engine call fails. */
+    private suspend fun runExecute(analysis: AnalysisResult, action: NextAction): ExecutedAction? =
+        runCatching { repository.execute(analysis, action) }
+            .map { ExecutedAction(action.id, it.replies, it.objects, it.note) }
+            .getOrNull()
+
+    /**
+     * A follow-up question about the analysis the panel is showing, answered with that analysis
+     * as grounding. Failures land as a turn, like in the full app.
+     */
+    private fun sendChat(text: String) {
+        val current = panelState.result ?: return
+        val question = text.trim()
+        if (question.isEmpty() || panelState.chatBusy) return
+        val previous = panelState.chat
+        panelState.chat = previous + ChatTurn(ChatRole.USER, question)
+        panelState.chatBusy = true
+        lifecycleScope.launch {
+            try {
+                val reply = repository.chat(current, previous, question)
+                panelState.chat = panelState.chat + ChatTurn(ChatRole.ASSISTANT, reply)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                panelState.chat = panelState.chat +
+                    ChatTurn(ChatRole.ASSISTANT, "回复失败：${e.message ?: "请重试"}")
+            } finally {
+                panelState.chatBusy = false
+            }
+        }
     }
 
     /**
@@ -288,6 +330,55 @@ class AssistantPanelWindow(
         pendingInitialText = text
         if (suspended) resumePanel() else show()
         Log.i(TAG, "panel visible after capture: ${view != null}")
+    }
+
+    /**
+     * Called when a capture returns a framed picture: the panel reads it and shows the result
+     * itself, over the app the user was reading.
+     *
+     * The frame's text is recognised on device and analysed ([FrameAnalysis]), and the top
+     * recommended action runs right away — the point of the one-tap flow is that copy-ready reply
+     * drafts are waiting when the panel comes back, not another two taps down.
+     */
+    fun deliverCaptureImage(path: String) {
+        Log.i(TAG, "panel deliverCaptureImage: suspended=$suspended")
+        capturedText.value = null
+        captureFailure.value = null
+        panelState.result = null
+        panelState.chosen = null
+        panelState.executed = null
+        panelState.chat = emptyList()
+        panelState.copied = null
+        panelState.error = null
+        panelState.analyzing = true
+        if (suspended) resumePanel() else show()
+        lifecycleScope.launch {
+            val bitmap = withContext(Dispatchers.IO) {
+                runCatching { BitmapFactory.decodeFile(path) }.getOrNull().also {
+                    runCatching { File(path).delete() }
+                }
+            }
+            if (bitmap == null) {
+                panelState.analyzing = false
+                panelState.error = "截屏读取失败，请重新截取"
+                return@launch
+            }
+            try {
+                val result = FrameAnalysis.analyze(repository, bitmap)
+                panelState.result = result
+                result.actions.firstOrNull()?.let { action ->
+                    panelState.chosen = action
+                    panelState.executed = runExecute(result, action)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                panelState.error = e.message ?: "分析失败，请重试"
+            } finally {
+                bitmap.recycle()
+                panelState.analyzing = false
+            }
+        }
     }
 
     /** Escape hatch: the panel is a summary, the full app has everything. */
@@ -331,7 +422,7 @@ class AssistantPanelWindow(
  * later two read from it — a fresh instance per call would discard that and fall back to local.
  */
 private class ConfigurableEngine(context: Context) :
-    ConversationStateBuilder, NextActionEngine, ChatToActionEngine {
+    ConversationStateBuilder, NextActionEngine, ChatToActionEngine, AnalysisChatEngine {
 
     private val engineFactory = EngineSettingsStore.engineFactory(context)
     private val factory = engineFactory.first
@@ -356,6 +447,13 @@ private class ConfigurableEngine(context: Context) :
         state: ConversationState,
         action: NextAction
     ): ActionResult = engine().execute(context, state, action)
+
+    override suspend fun chat(
+        context: ContextCapsule,
+        state: ConversationState,
+        history: List<ChatTurn>,
+        question: String
+    ): String = engine().chat(context, state, history, question)
 }
 
 /**

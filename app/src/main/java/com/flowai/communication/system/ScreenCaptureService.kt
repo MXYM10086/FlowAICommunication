@@ -14,7 +14,9 @@ import android.util.Log
 import com.flowai.communication.MainActivity
 import com.flowai.communication.R
 import com.flowai.communication.domain.CaptureEndReason
+import com.flowai.communication.domain.CaptureFailure
 import com.flowai.communication.domain.CaptureRegion
+import com.flowai.communication.domain.FrameResult
 import java.util.concurrent.atomic.AtomicReference
 
 /**
@@ -33,7 +35,6 @@ import java.util.concurrent.atomic.AtomicReference
 class ScreenCaptureService : Service() {
 
     private val screenshotter = AtomicReference<Screenshotter?>(null)
-    private val ocr = AtomicReference<OcrEngine?>(null)
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -65,7 +66,6 @@ class ScreenCaptureService : Service() {
 
         val shot = MediaProjectionScreenshotter(this, projection)
         screenshotter.set(shot)
-        // ML Kit's recogniser is created lazily on first use so a granted-but-unused session is cheap.
         pendingRegion = intent.getParcelableExtra(EXTRA_REGION)
         attach(this)
         Log.i(TAG, "capture session started")
@@ -73,32 +73,25 @@ class ScreenCaptureService : Service() {
     }
 
     /**
-     * Captures the requested region and returns the recognised text.
+     * Captures the requested region and returns the raw frame, or why there is none.
      *
-     * [region] null means the whole screen. Returns null when nothing could be read, which the
-     * caller should present as "nothing found" rather than an error.
+     * [region] null means the whole screen. How the frame is *read* belongs to the caller
+     * ([CaptureDispatch]): [FrameAnalysis] recognises its text on device through [OcrPipeline]
+     * and analyses that. Ownership of the bitmap moves to the caller.
      *
-     * Must not run on the main thread: OCR blocks and the projection work is synchronous here.
+     * Must not run on the main thread: the projection work is synchronous here.
      */
-    fun captureText(region: CaptureRegion?): String? {
-        val shot = screenshotter.get() ?: return null
-        if (!shot.isReady) return null
-        val bitmap = shot.capture(region) ?: return null
-        return try {
-            val engine = ocr.get() ?: MlKitOcrEngine().also { ocr.set(it) }
-            // Speaker labels are inferred from line alignment: without them the dialogue parser
-            // sees only unknown speakers and the analysis degrades to its generic fallback.
-            OcrTextAssembler
-                .assembleWithSpeakers(engine.recognize(bitmap), bitmap.width)
-                .ifBlank { null }
-        } finally {
-            // Release the frame immediately; a screenshot is the most sensitive artifact here.
-            bitmap.recycle()
-        }
+    fun captureFrame(region: CaptureRegion?): FrameResult {
+        val shot = screenshotter.get() ?: return FrameResult.Failure(CaptureFailure.SERVICE_DEAD)
+        if (!shot.isReady) return FrameResult.Failure(CaptureFailure.SERVICE_DEAD)
+        // capture() returns null only when every sampled frame was black or never rendered — the
+        // FLAG_SECURE / empty-window signature — so there is nothing left to read.
+        val bitmap = shot.capture(region)
+            ?: return FrameResult.Failure(CaptureFailure.BLACK_FRAME)
+        return FrameResult.Frame(bitmap)
     }
 
     override fun onDestroy() {
-        ocr.getAndSet(null)?.close()
         screenshotter.getAndSet(null)?.release()
         detach(this)
         Log.i(TAG, "capture session released")
@@ -169,10 +162,12 @@ class ScreenCaptureService : Service() {
         }
 
         /**
-         * Captures and recognises, or null when no session is active / nothing was recognised.
-         * Call from a background thread.
+         * Captures one frame, or a [FrameResult.Failure] when no session is active / the window
+         * forbids screenshots. Call from a background thread; the caller owns the bitmap.
          */
-        fun captureText(region: CaptureRegion? = null): String? = instance?.captureText(region)
+        fun captureFrame(region: CaptureRegion? = null): FrameResult =
+            instance?.captureFrame(region)
+                ?: FrameResult.Failure(CaptureFailure.SERVICE_DEAD)
 
         /** Region requested when the session was started, or null for the whole screen. */
         fun requestedRegion(): CaptureRegion? = pendingRegion

@@ -6,8 +6,8 @@ android {
         applicationId = "com.flowai.communication"
         minSdk = 26
         targetSdk = 34
-        versionCode = 26
-        versionName = "1.0.4"
+        versionCode = 28
+        versionName = "1.2.0"
 
         ndk {
             // The bundled ML Kit OCR pipeline ships a 7-12 MB native library PER ABI; shipping all
@@ -45,8 +45,8 @@ android {
     kotlinOptions { jvmTarget = "17" }
     testOptions {
         unitTests {
-            // Remote engine tests reach real code paths that log. Without this, android.util.Log is
-            // an unmocked stub and the test fails on the logging rather than on the logic.
+            // Remote engine tests reach real code paths that log. Without this, android.util.Log
+            // is an unmocked stub and the test fails on the logging rather than on the logic.
             isReturnDefaultValues = true
         }
     }
@@ -66,6 +66,14 @@ dependencies {
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
     implementation("com.google.mlkit:text-recognition:16.0.1")
 
+    // 三风格回复卡片的网络栈（阶段 3）：Retrofit 声明接口、OkHttp 负责连接与取消
+    // （协程取消 → call.cancel）、Gson 解析 OpenAI 兼容响应。版本对齐 AGP 8.3.2 /
+    // Kotlin 1.9.24；Gson 显式钉住，压过 converter-gson 2.9.0 传递的旧版。
+    implementation("com.squareup.retrofit2:retrofit:2.9.0")
+    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("com.google.code.gson:gson:2.10.1")
+
     testImplementation("junit:junit:4.13.2")
     // Engine calls are suspending so a network-backed implementation can satisfy the same seam.
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
@@ -73,3 +81,4 @@ dependencies {
     // engine's request building and response parsing are genuinely exercised.
     testImplementation("org.json:json:20240303")
 }
+

@@ -9,8 +9,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import com.flowai.communication.ai.ApiFormat
 import com.flowai.communication.ai.EngineMode
 import com.flowai.communication.ai.EngineSettingsStore
+import com.flowai.communication.ai.PROVIDER_PRESETS
 import com.flowai.communication.ui.components.InfoCard
 
 /**
@@ -18,7 +20,12 @@ import com.flowai.communication.ui.components.InfoCard
  *
  * Two states only: analyse on the phone, or call the model API with a key. The key is entered here
  * rather than compiled in, and nothing is uploaded until the user agrees.
+ *
+ * "Various models" is served two ways: a protocol selector (OpenAI-compatible covers most providers;
+ * Anthropic and Gemini speak their own) and one-tap presets that fill protocol, endpoint and a
+ * current model name together — the key is never part of a preset.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EngineSettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
@@ -46,6 +53,38 @@ fun EngineSettingsScreen(onBack: () -> Unit) {
             )
         )
 
+        Text("服务商预设", style = MaterialTheme.typography.titleMedium)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            PROVIDER_PRESETS.forEach { preset ->
+                AssistChip(
+                    onClick = {
+                        draft = draft.copy(
+                            apiFormat = preset.format,
+                            providerUrl = preset.url,
+                            model = preset.model
+                        )
+                        status = null
+                    },
+                    label = { Text(preset.name) }
+                )
+            }
+        }
+        Text(
+            "点选后自动填好接口格式、地址与模型名，只需再填自己的 API Key。",
+            style = MaterialTheme.typography.bodySmall
+        )
+
+        Text("接口格式", style = MaterialTheme.typography.titleMedium)
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ApiFormat.entries.forEach { format ->
+                FilterChip(
+                    selected = draft.apiFormat == format,
+                    onClick = { draft = draft.copy(apiFormat = format); status = null },
+                    label = { Text(format.label) }
+                )
+            }
+        }
+
         OutlinedTextField(
             value = draft.apiKey,
             onValueChange = { draft = draft.copy(apiKey = it.trim()); status = null },
@@ -62,7 +101,9 @@ fun EngineSettingsScreen(onBack: () -> Unit) {
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             label = { Text("接口地址") },
-            supportingText = { Text("默认 DeepSeek。兼容 OpenAI /chat/completions 的服务都可直接用。") }
+            supportingText = {
+                Text("按所选接口格式填写：OpenAI 兼容填完整的 /chat/completions 地址；Anthropic、Gemini 填服务根地址。")
+            }
         )
         OutlinedTextField(
             value = draft.model,

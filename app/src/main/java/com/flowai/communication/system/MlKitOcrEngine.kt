@@ -39,7 +39,8 @@ class MlKitOcrEngine : OcrEngine {
                         left = box?.left ?: 0,
                         top = box?.top ?: 0,
                         right = box?.right ?: 0,
-                        bottom = box?.bottom ?: 0
+                        bottom = box?.bottom ?: 0,
+                        confidence = line.confidence
                     )
                 }
             }

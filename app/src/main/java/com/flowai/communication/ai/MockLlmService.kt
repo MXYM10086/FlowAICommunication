@@ -1,6 +1,7 @@
 ﻿package com.flowai.communication.ai
 import com.flowai.communication.data.model.*
 import com.flowai.communication.data.repository.DemoConversations
+import com.flowai.communication.domain.ChatTurn
 import com.flowai.communication.domain.PlainTextDialogueParser
 
 class MockLlmService : LlmService {
@@ -48,6 +49,31 @@ class MockLlmService : LlmService {
         }
         return actions.sortedBy { it.priority }.take(3)
     }
+    /**
+     * Follow-up answers without a network: grounded in the analysis it is asked about, and
+     * upfront about being a template. Configuring a model API is what turns this into a real
+     * conversation.
+     */
+    override suspend fun chat(
+        context: ContextCapsule,
+        state: ConversationState,
+        history: List<ChatTurn>,
+        question: String
+    ): String {
+        val grounded = (state.keyFacts + state.unresolvedIssues + state.communicationSignals)
+            .filter { it.isNotBlank() }.take(3)
+        return buildString {
+            append("（本机模拟回复）你问「").append(question).append("」。")
+            append("围绕「").append(state.topic).append("」")
+            if (grounded.isNotEmpty()) {
+                append("，目前可依据的是：").append(grounded.joinToString("；")).append("。")
+            } else {
+                append("，当前分析还没有足够依据。")
+            }
+            append(" Mock 不联网、不理解追问语义；在「分析引擎设置」配置模型 API 后，这里会是真正的模型回答。")
+        }
+    }
+
     private fun action(id: String, title: String, description: String, type: ActionType, reason: String, priority: Int) =
         NextAction(id, title, description, type, reason, priority)
 

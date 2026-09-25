@@ -1,13 +1,12 @@
 ﻿package com.flowai.communication
 
 import android.content.Intent
-import android.media.projection.MediaProjectionManager
+import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.material3.*
@@ -18,6 +17,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.LocalSaveableStateRegistry
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -25,27 +25,25 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import com.flowai.communication.data.model.SourceType
-import com.flowai.communication.domain.CaptureRegion
+import com.flowai.communication.domain.CaptureFailure
 import com.flowai.communication.domain.PrefsConsumedShareStore
 import com.flowai.communication.domain.SharedText
+import com.flowai.communication.system.CaptureDispatch
 import com.flowai.communication.system.CaptureForPanelActivity
 import com.flowai.communication.system.FloatingAssistantService
-import com.flowai.communication.system.RegionPickerActivity
-import com.flowai.communication.system.ScreenCaptureService
+import com.flowai.communication.system.InstantCaptureActivity
 import com.flowai.communication.ui.*
 import com.flowai.communication.ui.home.*
+import com.flowai.communication.ui.ocr.OcrPreviewScreen
 import com.flowai.communication.ui.analysis.AnalysisScreen
 import com.flowai.communication.ui.action.ActionScreen
+import com.flowai.communication.ui.chat.ChatScreen
 import com.flowai.communication.ui.components.EngineBadge
 import com.flowai.communication.ui.components.FlowTheme
+import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** Extra that opens the assistant panel directly; used for testing and from the home screen. */
 private const val EXTRA_SHOW_ASSISTANT = "show_assistant"
@@ -54,16 +52,31 @@ private const val EXTRA_SHOW_ASSISTANT = "show_assistant"
 private const val TAG = "FlowAI"
 
 /**
- * Upper bound on waiting for the projection to come up after consent.
+ * One finished capture-chain run handed to the composition.
  *
- * Generous on purpose: the user reads a consent dialog first, and a timeout shorter than that
- * (5s was too short in practice) would abandon the capture before it ever started.
+ * A plain class on purpose: [FlowApp] keys a LaunchedEffect on it, and two captures can carry
+ * identical text (or the same failure message), so structural equality would swallow the second.
+ *
+ * [imagePath] points at the staged frame PNG when the capture went the framed-image route; the
+ * panel decodes it once, recognises its text on device, and deletes the file right away.
  */
-private const val CAPTURE_READY_TIMEOUT_MS = 30_000L
-private const val CAPTURE_READY_INTERVAL_MS = 100L
+private class CaptureDelivery(val text: String?, val failure: String?, val imagePath: String? = null)
 
-/** Extra settle time so the virtual display has produced at least one frame. */
-private const val CAPTURE_SETTLE_MS = 600L
+/**
+ * Guidance string for each capture failure reason.
+ *
+ * Shared by every capture entry point (in-app, panel, bubble) so the same failure always reads the
+ * same way. Kept out of `domain` because it resolves platform string resources.
+ */
+internal fun captureFailureMessage(reason: CaptureFailure): Int = when (reason) {
+    CaptureFailure.NO_CONSENT -> R.string.capture_failure_no_consent
+    CaptureFailure.BLACK_FRAME -> R.string.capture_failure_black_frame
+    CaptureFailure.NO_TEXT -> R.string.capture_failure_no_text
+    CaptureFailure.OCR_TIMEOUT -> R.string.capture_failure_ocr_timeout
+    CaptureFailure.SERVICE_DEAD -> R.string.capture_failure_service_dead
+    CaptureFailure.NO_REMOTE_ENGINE -> R.string.capture_failure_no_remote_engine
+    CaptureFailure.UNKNOWN -> R.string.capture_failure_unknown
+}
 
 class MainActivity : ComponentActivity() {
 
@@ -72,126 +85,41 @@ class MainActivity : ComponentActivity() {
     /** Last payload handed to the ViewModel, so repeat deliveries are logged as such. */
     private var lastDelivered: String? = null
 
-    /** Set while the capture session is being established, so the UI can show progress. */
-    private var captureInProgress by mutableStateOf(false)
-
-    /** The live ViewModel, so the capture coroutine can deliver results. */
-    private var activeVm: FlowViewModel? = null
-
-    /** Region chosen in the picker, or null for the whole screen. */
-    private var pendingRegion: CaptureRegion? = null
-
-    /** Owns the capture coroutine; the Activity outlives the consent dialog. */
-    private val captureScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-
     /**
-     * Region picker. Returns the framed conversation area, which both improves OCR accuracy and
-     * keeps unrelated screen content out of the pipeline.
+     * The last result handed back by the translucent capture chain, for the composition to apply.
      */
-    private val regionPicker = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        pendingRegion = if (result.resultCode == RESULT_OK) {
-            @Suppress("DEPRECATION")
-            result.data?.getParcelableExtra(RegionPickerActivity.EXTRA_REGION)
-        } else {
-            // Cancelled, or the user chose full screen (which also returns CANCELED + no region).
-            null
-        }
-        val chosen = pendingRegion
-        Log.i(TAG, if (chosen == null) "capture region: full screen" else "capture region: $chosen")
-        askForCaptureConsent()
-    }
-
-    /** Asks for capture consent; the result callback then runs [runCapture]. */
-    private fun requestScreenCapture() {
-        if (captureInProgress) return
-        captureInProgress = true
-        regionPicker.launch(RegionPickerActivity.intent(this))
-    }
-
-    private fun askForCaptureConsent() {
-        val manager = getSystemService(MediaProjectionManager::class.java)
-        projectionConsent.launch(manager.createScreenCaptureIntent())
-    }
+    private var captureDelivery by mutableStateOf<CaptureDelivery?>(null)
 
     /**
-     * MediaProjection consent. Android 14 requires consent for EVERY capture session, so this
-     * launcher is used per capture and its result is never cached or reused.
-     */
-    private val projectionConsent = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        val data = result.data
-        if (result.resultCode != RESULT_OK || data == null) {
-            Log.i(TAG, "screen capture consent denied")
-            activeVm?.reportCaptureUnavailable("已取消截屏授权")
-            captureInProgress = false
-            return@registerForActivityResult
-        }
-        val started = ScreenCaptureService.start(applicationContext, result.resultCode, data, pendingRegion)
-        Log.i(TAG, "screen capture session start requested: started=$started")
-        if (!started) {
-            activeVm?.reportCaptureUnavailable("无法启动截屏服务")
-            captureInProgress = false
-        } else {
-            runCapture()
-        }
-    }
-
-    /**
-     * Waits for the projection, captures once, and hands the text to the normal pipeline.
+     * Hands the capture to the translucent chain, then steps out of its way.
      *
-     * Runs on [captureScope] rather than inside the composition: the consent dialog backgrounds the
-     * host and a composition-scoped effect can be cancelled mid-wait.
+     * The chain (frame -> consent -> capture) has to run over the app the user was reading, never
+     * over FlowAI: it is started while we are still in the foreground — starting activities from
+     * the background is blocked — and [moveTaskToBack] then parks our opaque UI underneath the
+     * chain's own translucent task, so the picker frames the chat. The result arrives later as an
+     * intent extra ([consumeCaptureResult]), which also brings us forward again with the preview.
      */
-    private fun runCapture() {
-        captureScope.launch {
-            // Wait for the projection to come up. Without this the first frames do not exist yet
-            // and the capture would look like a broken OCR rather than an early read.
-            var waited = 0L
-            while (!ScreenCaptureService.isActive && waited < CAPTURE_READY_TIMEOUT_MS) {
-                delay(CAPTURE_READY_INTERVAL_MS)
-                waited += CAPTURE_READY_INTERVAL_MS
-            }
-            // Even once active the virtual display needs a frame or two.
-            delay(CAPTURE_SETTLE_MS)
-
-            val active = ScreenCaptureService.isActive
-            val text = if (active) {
-                withContext(Dispatchers.IO) {
-                    ScreenCaptureService.captureText(ScreenCaptureService.requestedRegion())
-                }
-            } else null
-            ScreenCaptureService.stop(applicationContext)
-
-            val vm = activeVm
-            when {
-                !active -> {
-                    Log.i(TAG, "capture session never became active")
-                    vm?.reportCaptureUnavailable("没有拿到截屏权限或截屏服务未启动")
-                }
-                text.isNullOrBlank() -> {
-                    Log.i(TAG, "screen capture produced no text")
-                    vm?.reportCaptureEmpty()
-                }
-                else -> {
-                    Log.i(TAG, "screen capture recognised chars=${text.length}")
-                    // allowSameText: re-reading the same screen is an explicit user action.
-                    vm?.consumeShare(text, SourceType.SCREENSHOT, allowSameText = true)
-                }
-            }
-            captureInProgress = false
-        }
+    private fun requestScreenCapture() {
+        runCatching { startActivity(InstantCaptureActivity.intent(this)) }
+            .onFailure { Log.w(TAG, "could not start the capture chain", it) }
+        moveTaskToBack(true)
     }
 
-    override fun onDestroy() {
-        captureScope.cancel()
-        super.onDestroy()
-    }
-
-    private companion object {
-        // Constants shared with the composition are file-level (see top of this file).
+    /** Reads a capture-chain result out of [intent] and drops it, so a re-delivery cannot replay. */
+    private fun consumeCaptureResult(intent: Intent?) {
+        // Both capture entry points stage direct-image frames under the same shared extra.
+        val imagePath = intent?.getStringExtra(CaptureDispatch.EXTRA_CAPTURED_IMAGE)
+        val text = intent?.getStringExtra(InstantCaptureActivity.EXTRA_CAPTURED_TEXT)
+        val failure = intent?.getStringExtra(InstantCaptureActivity.EXTRA_FAILURE)
+        if (imagePath == null && text == null && failure == null) return
+        intent.removeExtra(CaptureDispatch.EXTRA_CAPTURED_IMAGE)
+        intent.removeExtra(InstantCaptureActivity.EXTRA_CAPTURED_TEXT)
+        intent.removeExtra(InstantCaptureActivity.EXTRA_FAILURE)
+        Log.i(
+            TAG,
+            "capture chain returned: chars=${text?.length ?: 0} image=$imagePath failure=$failure"
+        )
+        captureDelivery = CaptureDelivery(text, failure, imagePath)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -199,6 +127,7 @@ class MainActivity : ComponentActivity() {
         // ViewModel still survives configuration changes through non-config retention.
         super.onCreate(null)
         consumeSharedText(intent)
+        consumeCaptureResult(intent)
         handleAssistantIntents(intent)
         // The external entry points outlive any single ViewModel, so they get a
         // process-surviving "already consumed" store. Without it, an intent re-delivered after
@@ -212,7 +141,8 @@ class MainActivity : ComponentActivity() {
             FlowViewModel(
                 consumedShares = PrefsConsumedShareStore(applicationContext),
                 engineFactory = engine,
-                engineSignature = signature
+                engineSignature = signature,
+                replyStyles = com.flowai.communication.ai.ReplyStyleStore(applicationContext)
             )
         } }
         setContent {
@@ -221,10 +151,8 @@ class MainActivity : ComponentActivity() {
                 FlowTheme {
                     FlowApp(
                         incoming = incoming,
-                        captureInProgress = captureInProgress,
+                        captureDelivery = captureDelivery,
                         onRequestCapture = ::requestScreenCapture,
-                        onCaptureFinished = { captureInProgress = false },
-                        onViewModelReady = { activeVm = it },
                         factory = factory
                     )
                 }
@@ -239,6 +167,7 @@ class MainActivity : ComponentActivity() {
         // arrives here rather than in onCreate — so both paths must handle it.
         handleAssistantIntents(intent)
         consumeSharedText(intent)
+        consumeCaptureResult(intent)
     }
 
     /**
@@ -334,18 +263,31 @@ class MainActivity : ComponentActivity() {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable private fun FlowApp(
     incoming: SharedText.Incoming? = null,
-    captureInProgress: Boolean = false,
+    captureDelivery: CaptureDelivery? = null,
     onRequestCapture: () -> Unit = {},
-    onCaptureFinished: () -> Unit = {},
-    onViewModelReady: (FlowViewModel) -> Unit = {},
     factory: ViewModelProvider.Factory? = null,
     vm: FlowViewModel = if (factory != null) viewModel(factory = factory) else viewModel()
 ) {
     val context = LocalContext.current
-    // Hand the ViewModel to the Activity so the capture coroutine (owned by the Activity, not the
-    // composition) can deliver its result. Driving capture from a LaunchedEffect is fragile here:
-    // the consent dialog backgrounds the host, which can cancel a composition-scoped effect.
-    LaunchedEffect(vm) { onViewModelReady(vm) }
+    // A finished capture chain hands its result over here: the preview (or the failure notice)
+    // opens just as the chain's own translucent task leaves the screen. A staged frame takes the
+    // direct-image route instead: decode, delete the cache file at once, and analyse the picture.
+    LaunchedEffect(captureDelivery) {
+        val delivery = captureDelivery ?: return@LaunchedEffect
+        val imagePath = delivery.imagePath
+        if (imagePath != null) {
+            val bitmap = withContext(Dispatchers.IO) {
+                runCatching { BitmapFactory.decodeFile(imagePath) }.getOrNull().also {
+                    runCatching { File(imagePath).delete() }
+                }
+            }
+            if (bitmap != null) vm.analyzeScreenshot(bitmap)
+            else vm.reportCaptureUnavailable(context.getString(R.string.capture_failure_unknown))
+            return@LaunchedEffect
+        }
+        if (delivery.text != null) vm.showOcrPreview(delivery.text)
+        else vm.reportCaptureUnavailable(delivery.failure.orEmpty())
+    }
     LaunchedEffect(incoming) {
         val payload = incoming ?: return@LaunchedEffect
         val source = when (payload.entry) {
@@ -358,11 +300,21 @@ class MainActivity : ComponentActivity() {
     Scaffold(topBar = {
         TopAppBar(title = { Text("FlowAI") }, navigationIcon = {
             if (vm.page != Page.HOME) TextButton(onClick = vm::back) {
-                Text(if (vm.page == Page.ACTION) "返回分析" else "结束返回")
+                Text(when (vm.page) {
+                    // Both hang off the analysis: leaving either returns there, session intact.
+                    Page.ACTION, Page.CHAT -> "返回分析"
+                    // No session exists on the preview yet — it starts at confirmation — so there
+                    // is nothing to "end"; the button just abandons the draft.
+                    Page.OCR_PREVIEW -> "取消"
+                    else -> "结束返回"
+                })
             }
         }, actions = { EngineBadge() })
     }, bottomBar = {
-        if (vm.page != Page.HOME) Surface(tonalElevation = 2.dp) {
+        // The preview holds no session yet, so the "end and clear" bar would promise something
+        // that does not exist; its own bottom bar carries the recapture/confirm actions. The chat
+        // brings its own input row, and stacking two bottom bars would push it off the keyboard.
+        if (vm.page != Page.HOME && vm.page != Page.OCR_PREVIEW && vm.page != Page.CHAT) Surface(tonalElevation = 2.dp) {
             Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 10.dp)) {
                 OutlinedButton(onClick = vm::endSession, modifier = Modifier.fillMaxWidth()) {
                     Text("结束并清除本次内容")
@@ -379,20 +331,43 @@ class MainActivity : ComponentActivity() {
                     open = vm::openInput,
                     clearedNotice = vm.clearedNotice,
                     captureNotice = vm.captureNotice,
-                    captureInProgress = captureInProgress,
                     onRequestCapture = onRequestCapture,
-                    onOpenSettings = vm::openSettings
+                    onOpenSettings = vm::openSettings,
+                    onOpenSkins = vm::openSkins
                 )
                 Page.INPUT -> InputScreen(
                     vm.input, vm.error, vm::edit, vm::analyze, vm.sourceType,
                     supersededNotice = vm.supersededNotice,
-                    clearedNotice = vm.clearedNotice
+                    clearedNotice = vm.clearedNotice,
+                    replyStyle = vm.replyStyle,
+                    onSelectReplyStyle = vm::selectReplyStyle
                 )
-                Page.ANALYSIS -> vm.analysis?.let { AnalysisScreen(it, vm::choose) }
+                Page.OCR_PREVIEW -> OcrPreviewScreen(
+                    draft = vm.ocrDraft,
+                    onEdit = vm::editOcrDraft,
+                    onSubmit = vm::submitOcrDraft,
+                    onRecapture = onRequestCapture
+                )
+                Page.ANALYSIS -> vm.analysis?.let { AnalysisScreen(it, vm::choose, vm::openChat) }
+                Page.CHAT -> ChatScreen(vm.chat, vm.chatBusy, vm::sendChat)
                 Page.ACTION -> vm.output?.let { output -> vm.selected?.let { action ->
                     ActionScreen(action, output, vm::editReply)
                 } }
                 Page.SETTINGS -> com.flowai.communication.ui.settings.EngineSettingsScreen(vm::back)
+                Page.SKINS -> com.flowai.communication.ui.skins.PetSkinScreen(vm::back)
+            }
+            // Direct image analysis is a network call with nothing on screen to show for it —
+            // without this the home page would just sit there until the model answers.
+            if (vm.busy && vm.page == Page.HOME) {
+                Column(
+                    Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(12.dp))
+                    Text("正在识别截屏文字并分析…")
+                }
             }
         }
     }

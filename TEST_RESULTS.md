@@ -1,5 +1,8 @@
 # 验证记录
 
+> **当前构建全功能验证已完成**（1.1.0，截屏"先识别文字再分析"改版后，2026-09-24）：README 8 条路径 + V2 入口逐条复核，`163` 项单测全过、Lint 0 错误。
+> 详见 [当前构建全功能验证记录](docs/verification/FEATURE_VERIFICATION.md)。
+
 > **真机验收已完成**（Android 16 / Redmi，2026-09-19）：8 条路径中 7 条自动通过、旋转由人工确认。
 > 详见 [真机验收记录](docs/verification/DEVICE_ACCEPTANCE.md)。
 

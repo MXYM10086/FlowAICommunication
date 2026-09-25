@@ -3,18 +3,30 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.flowai.communication.data.model.*
 import com.flowai.communication.ui.components.*
 
-@Composable fun AnalysisScreen(result: AnalysisResult, choose: (NextAction) -> Unit) {
+@Composable fun AnalysisScreen(
+    result: AnalysisResult,
+    choose: (NextAction) -> Unit,
+    onOpenChat: () -> Unit = {}
+) {
     val s = result.state
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    LazyColumn(Modifier.fillMaxSize().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = 720.dp),
+        contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text(s.topic, style = MaterialTheme.typography.headlineMedium) }
         // EngineNote already states where the analysis came from, based on the live configuration.
         // A hard-coded "Mock 模拟分析" fallback would contradict it whenever the API is in use.
         item { EngineNote(s.confidenceNote) }
+        // The follow-up conversation is grounded in exactly this analysis, so its entry lives here.
+        item {
+            Button(onClick = onOpenChat, modifier = Modifier.fillMaxWidth()) {
+                Text("就这次分析追问模型")
+            }
+        }
         item { InfoCard("当前沟通状态 · ${stageLabel(s.stage)}", s.participantGoals) }
         item { InfoCard("沟通信号", s.communicationSignals) }
         item { InfoCard("未解决问题", s.unresolvedIssues) }
@@ -32,7 +44,14 @@ import com.flowai.communication.ui.components.*
         item { InfoCard("已知事实", s.keyFacts) }
         item { InfoCard("已达成共识", s.agreements, "尚未发现双方明确确认的共识") }
         item { InfoCard("明确分歧", s.disagreements, "尚未发现明确表达的分歧") }
-        item { InfoCard("解析后的消息 · ${result.capsule.messages.size}", result.capsule.messages.map { "${it.order + 1}. ${speakerLabel(it.speaker)}：${it.text}" }) }
+        item { Text("解析后的消息 · ${result.capsule.messages.size}", style = MaterialTheme.typography.titleLarge) }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                result.capsule.messages.forEach { m ->
+                    ChatBubble(speakerLabel(m.speaker), m.text, m.speaker == Speaker.ME)
+                }
+            }
+        }
     }
 }
 private fun speakerLabel(s: Speaker) = when (s) { Speaker.ME -> "我"; Speaker.OTHER -> "对方"; Speaker.OTHER_2 -> "对方 2"; Speaker.UNKNOWN -> "未知说话人" }

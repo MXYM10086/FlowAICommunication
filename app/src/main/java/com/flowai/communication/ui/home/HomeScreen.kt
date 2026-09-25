@@ -1,28 +1,35 @@
 ﻿package com.flowai.communication.ui.home
+import android.content.Intent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.flowai.communication.ai.EngineSettingsStore
 import com.flowai.communication.data.repository.DemoConversations
+import com.flowai.communication.system.CaptureAccessibilityService
 import com.flowai.communication.system.FloatingAssistantService
 import com.flowai.communication.system.OverlayPermission
+import com.flowai.communication.system.pet.PetSkins
+import com.flowai.communication.system.pet.PrefsPetSkinStore
 import com.flowai.communication.ui.components.*
 
 @Composable fun HomeScreen(
     open: (String?) -> Unit,
     clearedNotice: String?,
     captureNotice: String? = null,
-    captureInProgress: Boolean = false,
     onRequestCapture: () -> Unit = {},
-    onOpenSettings: () -> Unit = {}
+    onOpenSettings: () -> Unit = {},
+    onOpenSkins: () -> Unit = {}
 ) {
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    LazyColumn(Modifier.fillMaxSize().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = 720.dp),
+        contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         item {
             Text("让沟通有下一步", style = MaterialTheme.typography.headlineLarge)
             Spacer(Modifier.height(8.dp))
@@ -70,14 +77,14 @@ import com.flowai.communication.ui.components.*
             }
 
             InfoCard(
-                "悬浮入口",
+                "悬浮桌宠",
                 listOf(
                     if (!granted) "需要先在系统设置里允许「显示在其他应用上层」。"
-                    else if (running) "悬浮球已开启，可在其他应用上方随时点开 FlowAI。"
-                    else "已获得权限，可以开启悬浮球。",
-                    "悬浮球只作为入口，不会自动读取任何聊天内容。",
+                    else if (running) "桌宠已开启，可在其他应用上方随时点开 FlowAI。"
+                    else "已获得权限，可以开启桌宠。",
+                    "桌宠只作为入口，不会自动读取任何聊天内容。",
                     // Reinstalling the app clears this permission on some ROMs, which looks like the
-                    // bubble silently vanished; say so instead of leaving the user guessing.
+                    // pet silently vanished; say so instead of leaving the user guessing.
                     if (!granted) "提示：重新安装应用后该权限可能会被系统清除，需要重新授权。"
                     else ""
                 ).filter { it.isNotEmpty() }
@@ -99,29 +106,105 @@ import com.flowai.communication.ui.components.*
                         }
                     },
                     modifier = Modifier.fillMaxWidth()
-                ) { Text(if (running) "关闭悬浮球" else "开启悬浮球") }
+                ) { Text(if (running) "关闭桌宠" else "开启桌宠") }
                 Spacer(Modifier.height(6.dp))
-                // Same panel the bubble opens, reachable without the overlay.
+                // Same panel the pet opens, reachable without the overlay.
                 OutlinedButton(
                     onClick = { FloatingAssistantService.openPanel(context) },
                     modifier = Modifier.fillMaxWidth()
                 ) { Text("打开助手面板") }
+                Spacer(Modifier.height(6.dp))
+                // 三风格回复卡片测试入口：overlay 窗口无法由 adb 注入触摸，桌宠单击只能人工
+                // 触发，验收（拖拽/吸边/最小化/复制）需要一个能点的入口。阶段 1 弹样例文本。
+                OutlinedButton(
+                    onClick = { FloatingAssistantService.showTestCard(context) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("测试回复卡片（样例文本）") }
+                Spacer(Modifier.height(6.dp))
+                // 桌宠一键的等价入口（overlay 触摸无法 adb 注入）：截屏 → 本机 OCR → 卡片。
+                OutlinedButton(
+                    onClick = { FloatingAssistantService.startCardCapture(context) },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("截屏识别 → 回复卡片") }
             }
         }
         item {
-            InfoCard("截屏识别（测试版）", listOf(
-                "把聊天界面显示在屏幕上，点下面的按钮，FlowAI 会截屏并识别其中的文字。",
-                "只识别这一次；识别完立即释放，不会持续截屏。",
-                if (captureInProgress) "正在等待截屏授权…" else "系统会先询问是否允许截屏。"
+            val context = LocalContext.current
+            val store = remember { PrefsPetSkinStore(context.applicationContext) }
+            // Re-read on resume so the row reflects a skin chosen on the picker screen.
+            var skin by remember { mutableStateOf(PetSkins.byId(store.load())) }
+            val lifecycleOwner = LocalLifecycleOwner.current
+            DisposableEffect(lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    if (event == Lifecycle.Event.ON_RESUME) skin = PetSkins.byId(store.load())
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+            }
+            InfoCard(
+                "桌宠皮肤",
+                listOf(
+                    "桌宠会自己眨眼、蹦跳、摇摆、转圈、打盹；点它有粒子特效，长按可以直接换下一款。",
+                    "当前皮肤：${skin.name}"
+                )
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedButton(onClick = onOpenSkins, modifier = Modifier.fillMaxWidth()) {
+                Text("选择桌宠皮肤")
+            }
+        }
+        item {
+            val context = LocalContext.current
+            val lifecycleOwner = LocalLifecycleOwner.current
+            // Re-read on resume: the service is enabled in system settings and reports back here.
+            var silent by remember { mutableStateOf(CaptureAccessibilityService.isRunning) }
+            // Recognition always happens on device; the engine only decides where the recognised
+            // text is analysed — remotely when configured and agreed to, locally otherwise.
+            var remote by remember {
+                mutableStateOf(EngineSettingsStore(context).load().canUseRemote)
+            }
+            DisposableEffect(lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    if (event == Lifecycle.Event.ON_RESUME) {
+                        silent = CaptureAccessibilityService.isRunning
+                        remote = EngineSettingsStore(context).load().canUseRemote
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+            }
+            InfoCard("截屏分析（测试版）", listOf(
+                "点桌宠一键截屏，或在当前界面框选聊天区域后确认。",
+                "框选确认后先在本机识别截屏中的聊天文字，再把文字交给模型分析；截屏图片不离开手机。",
+                if (remote) "远程模型已配置：识别出的文字上传分析（你已同意上传）。"
+                else "尚未配置远程模型：识别出的文字在本机分析。",
+                "桌宠一键截屏的分析与回复直接出现在悬浮面板，不离开聊天应用；下面的按钮则在主界面出结果。",
+                "只截取你框选的区域；截屏帧用完立即释放，不会持续录屏。",
+                "开启桌宠时会先请求一次屏幕共享；共享开启后框选确认立即截屏，无授权弹窗。",
+                if (silent) "已开启静音截屏：框选确认后直接出结果，无授权弹窗。"
+                else "未开启屏幕共享或静音截屏时，系统每次截屏都会弹一次授权框。"
             ))
             Spacer(Modifier.height(8.dp))
             Button(
                 onClick = onRequestCapture,
-                enabled = !captureInProgress,
                 modifier = Modifier.fillMaxWidth()
-            ) { Text(if (captureInProgress) "正在截屏…" else "截屏识别聊天内容") }
+            ) { Text("截屏分析聊天内容") }
+            if (!silent) {
+                Spacer(Modifier.height(6.dp))
+                // One-time system setup; afterwards captures need no consent dialog at all.
+                OutlinedButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(
+                                Intent(android.provider.Settings.ACTION_ACCESSIBILITY_SETTINGS)
+                            )
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("开启静音截屏（免授权弹窗）") }
+            }
             Text(
-                "识别结果会进入同一个分析流程，可先核对再分析。",
+                "分析结果直接进入同一个会话流程。",
                 style = MaterialTheme.typography.bodySmall
             )
             captureNotice?.let {

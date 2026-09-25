@@ -3,6 +3,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.text.AnnotatedString
@@ -13,7 +14,8 @@ import com.flowai.communication.ui.components.*
 @Composable fun ActionScreen(action: NextAction, result: ActionResult, editReply: (String, String) -> Unit) {
     val clipboard = LocalClipboardManager.current
     var copied by remember { mutableStateOf(false) }
-    LazyColumn(Modifier.fillMaxSize().imePadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    LazyColumn(Modifier.fillMaxSize().imePadding().wrapContentWidth(Alignment.CenterHorizontally).widthIn(max = 720.dp),
+        contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { Text(action.title, style = MaterialTheme.typography.headlineMedium) }
         item { EngineNote(result.note) }
         if (result.replies.isNotEmpty()) item { Text("推荐回复 · 可编辑后复制", style = MaterialTheme.typography.titleMedium) }
@@ -33,7 +35,7 @@ import com.flowai.communication.ui.components.*
         result.objects.forEach { obj -> item {
             when (obj) {
                 is ActionObject.Task -> InfoCard("任务 · ${obj.title}", listOf("负责人：${obj.assignee ?: "待确认"}", "截止：${obj.deadline ?: "待确认"}", obj.detail ?: ""))
-                is ActionObject.Event -> InfoCard("事件 · ${obj.title}", listOf("时间：${obj.time ?: "待确认"}", "地点：${obj.location ?: "待确认"}", "相关人员：${obj.participants.joinToString("、")}"))
+                is ActionObject.Event -> EventCalendarCard(obj)
                 is ActionObject.Decision -> InfoCard("决定", listOf(obj.content))
             }
         } }

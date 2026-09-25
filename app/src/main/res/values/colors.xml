@@ -1,1 +1,18 @@
-<resources><color name="launcher_background">#315CD5</color></resources>
+<resources>
+    <color name="launcher_background">#315CD5</color>
+    <!-- FlowAI palette. Mirrored by the Compose theme in ui/components/Components.kt; keep in sync. -->
+    <color name="flow_primary">#315CD5</color>
+    <color name="flow_on_primary">#FFFFFF</color>
+    <color name="flow_primary_container">#DBE7FF</color>
+    <color name="flow_on_primary_container">#14275C</color>
+    <color name="flow_secondary_container">#E7EEFF</color>
+    <color name="flow_on_secondary_container">#274595</color>
+    <color name="flow_background">#F6F8FC</color>
+    <color name="flow_on_background">#17233A</color>
+    <color name="flow_surface">#FFFFFF</color>
+    <color name="flow_on_surface">#17233A</color>
+    <color name="flow_surface_variant">#E6EBF4</color>
+    <color name="flow_on_surface_variant">#46536D</color>
+    <color name="flow_outline">#C5CFDF</color>
+    <color name="flow_error">#B3261E</color>
+</resources>

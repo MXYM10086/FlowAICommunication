@@ -12,6 +12,8 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.Log
 import com.flowai.communication.domain.CaptureRegion
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -30,6 +32,9 @@ import java.util.concurrent.atomic.AtomicBoolean
  *    does not silently return wrongly-sized frames.
  *  - **Frames are cropped in the caller's region**, so only the conversation area is ever handed
  *    to OCR.
+ *  - **Several frames are sampled and the best one wins.** The first frame after the virtual
+ *    display attaches is routinely black or half-rendered, so [capture] takes up to [MAX_FRAMES]
+ *    shots [FRAME_INTERVAL_MS] apart and returns whichever shows the most non-black content.
  */
 class MediaProjectionScreenshotter(
     context: Context,
@@ -85,13 +90,122 @@ class MediaProjectionScreenshotter(
 
     override fun capture(region: CaptureRegion?): Bitmap? {
         if (!isReady) return null
-        val reader = imageReader ?: return null
-        return runCatching {
-            // acquireLatestImage drops stale frames, which is what we want for a one-shot read.
-            val image = reader.acquireLatestImage() ?: return null
-            image.use { crop(it, region) }
-        }.onFailure { Log.w(TAG, "capture failed", it) }.getOrNull()
+        // The frame loop is paced with handler.postDelayed on the capture thread, so this caller
+        // (already a background thread) only blocks on a latch until the loop settles.
+        val latch = CountDownLatch(1)
+        val lock = Any()
+        var outcome: Bitmap? = null
+        var settled = false
+        val deliver: (Bitmap?, FrameQuality?) -> Unit = { bitmap, quality ->
+            // An all-black frame is FLAG_SECURE or a blank first frame, never a conversation.
+            val framed = when {
+                bitmap == null -> null
+                quality == null || quality.nonBlackRatio <= 0f -> {
+                    bitmap.recycle()
+                    null
+                }
+                else -> bitmap
+            }
+            synchronized(lock) {
+                if (settled) framed?.recycle() else {
+                    outcome = framed
+                    settled = true
+                }
+            }
+            latch.countDown()
+        }
+
+        // Always paced on the capture handler: callers arrive from their own background thread
+        // (the service forbids the main thread), never from this looper.
+        handler.post { collectBestFrame(region, 0, null, null, deliver) }
+
+        if (!latch.await(CAPTURE_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            // The loop outlived us: mark settled so whatever it finishes with recycles itself.
+            synchronized(lock) { settled = true }
+            return null
+        }
+        return synchronized(lock) { outcome }
     }
+
+    /**
+     * Samples up to [MAX_FRAMES] frames [FRAME_INTERVAL_MS] apart and keeps the best one.
+     *
+     * The first frame after a VirtualDisplay attaches is routinely black or half-rendered, so a
+     * single shot gambles on it; three shots 100ms apart almost always include a settled frame.
+     * Every frame that loses the comparison is recycled at once — only the current best survives,
+     * and the caller owns exactly one bitmap when the loop settles.
+     */
+    private fun collectBestFrame(
+        region: CaptureRegion?,
+        attempt: Int,
+        best: Bitmap?,
+        bestQuality: FrameQuality?,
+        deliver: (Bitmap?, FrameQuality?) -> Unit
+    ) {
+        if (released.get()) {
+            deliver(best, bestQuality)
+            return
+        }
+        val frame = grabFrame(region)
+        var keep = best
+        var keepQuality = bestQuality
+        if (frame != null) {
+            val quality = measureFrameQuality(frame)
+            if (isBetter(quality, keepQuality)) {
+                keep?.recycle()
+                keep = frame
+                keepQuality = quality
+            } else {
+                frame.recycle()
+            }
+        }
+        // A fully non-black frame cannot be beaten, so stop early instead of waiting out the loop.
+        val done = attempt + 1 >= MAX_FRAMES || keepQuality?.nonBlackRatio == 1f
+        if (done) {
+            deliver(keep, keepQuality)
+        } else {
+            handler.postDelayed(
+                { collectBestFrame(region, attempt + 1, keep, keepQuality, deliver) },
+                FRAME_INTERVAL_MS
+            )
+        }
+    }
+
+    /** One acquire-and-crop attempt; null when no frame was available or cropping failed. */
+    private fun grabFrame(region: CaptureRegion?): Bitmap? =
+        runCatching {
+            // acquireLatestImage drops stale frames, which is what we want for a one-shot read.
+            imageReader?.acquireLatestImage()?.use { crop(it, region) }
+        }.onFailure { Log.w(TAG, "capture failed", it) }.getOrNull()
+
+    private fun isBetter(candidate: FrameQuality, current: FrameQuality?): Boolean =
+        current == null ||
+            candidate.nonBlackRatio > current.nonBlackRatio ||
+            (candidate.nonBlackRatio == current.nonBlackRatio && candidate.avgLuma > current.avgLuma)
+
+    /**
+     * How much of a frame is actually rendered: mean luminance plus the share of pixels above
+     * [BLACK_THRESHOLD]. Read in one bulk [Bitmap.getPixels]; a per-pixel getPixel walk over a
+     * 1080p frame is two orders of magnitude slower.
+     */
+    private fun measureFrameQuality(bitmap: Bitmap): FrameQuality {
+        val width = bitmap.width
+        val height = bitmap.height
+        if (width <= 0 || height <= 0) return FrameQuality(0f, 0f)
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        var sum = 0L
+        var nonBlack = 0
+        for (p in pixels) {
+            val lum = ((p shr 16 and 0xFF) + (p shr 8 and 0xFF) + (p and 0xFF)) / 3
+            sum += lum
+            if (lum > BLACK_THRESHOLD) nonBlack++
+        }
+        val count = pixels.size
+        return FrameQuality(sum.toFloat() / count, nonBlack.toFloat() / count)
+    }
+
+    data class FrameQuality(val avgLuma: Float, val nonBlackRatio: Float)
 
     private fun crop(image: Image, region: CaptureRegion?): Bitmap? {
         val plane = image.planes.firstOrNull() ?: return null
@@ -127,29 +241,12 @@ class MediaProjectionScreenshotter(
      * direction entirely.
      */
     private fun logFrameStats(bitmap: Bitmap) {
-        val step = 32
-        var samples = 0
-        var nonBlack = 0
-        var sum = 0L
-        var y = 0
-        while (y < bitmap.height) {
-            var x = 0
-            while (x < bitmap.width) {
-                val p = bitmap.getPixel(x, y)
-                val lum = ((p shr 16 and 0xFF) + (p shr 8 and 0xFF) + (p and 0xFF)) / 3
-                sum += lum
-                if (lum > BLACK_THRESHOLD) nonBlack++
-                samples++
-                x += step
-            }
-            y += step
-        }
-        val avg = if (samples == 0) 0 else (sum / samples)
+        val quality = measureFrameQuality(bitmap)
         Log.i(
             TAG,
-            "frame ${bitmap.width}x${bitmap.height} avgLuma=$avg " +
-                "nonBlackSamples=$nonBlack/$samples " +
-                (if (nonBlack == 0) "=> ALL BLACK (FLAG_SECURE or empty frame)" else "")
+            "frame ${bitmap.width}x${bitmap.height} avgLuma=${quality.avgLuma} " +
+                "nonBlackRatio=${quality.nonBlackRatio} " +
+                (if (quality.nonBlackRatio <= 0f) "=> ALL BLACK (FLAG_SECURE or empty frame)" else "")
         )
     }
 
@@ -198,5 +295,14 @@ class MediaProjectionScreenshotter(
 
         /** Below this average luminance a pixel is treated as black. */
         const val BLACK_THRESHOLD = 8
+
+        /** How many frames to sample before picking the best one. */
+        const val MAX_FRAMES = 3
+
+        /** Spacing between frame attempts; paced on the capture handler, never Thread.sleep. */
+        const val FRAME_INTERVAL_MS = 100L
+
+        /** Worst case for the whole loop: the intervals plus slack for acquire and measure. */
+        const val CAPTURE_TIMEOUT_MS = MAX_FRAMES * FRAME_INTERVAL_MS + 700L
     }
 }

@@ -3,6 +3,7 @@ package com.flowai.communication.system
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.util.Log
@@ -10,27 +11,28 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import com.flowai.communication.MainActivity
+import com.flowai.communication.R
+import com.flowai.communication.captureFailureMessage
+import com.flowai.communication.domain.CaptureFailure
 import com.flowai.communication.domain.CaptureRegion
+import com.flowai.communication.domain.CaptureResult
+import com.flowai.communication.domain.FrameResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Capture launched straight from the floating bubble.
+ * The translucent capture chain: frame -> consent -> capture, over whatever app is on screen.
  *
- * Why this exists: a bubble that only re-opens the app is decoration — the launcher icon already
- * does that. What makes the bubble worth having is skipping the trip through the home screen:
+ * The in-app capture button starts this and immediately moves the main task to the background, so
+ * the picker frames the chat the user was reading instead of FlowAI's own UI. The manifest keeps
+ * this activity in a task of its own (empty taskAffinity): inside the main task its translucent
+ * window would show the opaque MainActivity through it, and every capture would photograph FlowAI.
  *
- *   before: bubble -> app home -> tap 截屏识别 -> frame -> consent -> recognise -> analyse
- *   now:    bubble -> frame -> consent -> analyse
- *
- * The region picker is translucent, so the app the user was looking at stays visible underneath
- * while they frame it. That is what lets the user pick the conversation they were just reading
- * instead of leaving it first.
- *
- * Finishes immediately and hands the recognised text to [MainActivity], so the analysis UI is
- * reached without the user pressing anything else.
+ * Finishes immediately and hands the staged frame to [MainActivity]
+ * ([CaptureDispatch.EXTRA_CAPTURED_IMAGE]), where the frame's text is recognised on device and
+ * analysed — the picture itself never leaves the phone, and no preview step stands in between.
  */
 class InstantCaptureActivity : ComponentActivity() {
 
@@ -46,7 +48,12 @@ class InstantCaptureActivity : ComponentActivity() {
             null // cancelled, or "whole screen" which also returns no region
         }
         Log.i(TAG, "instant capture region: ${pendingRegion ?: "full screen"}")
-        askForConsent()
+        when {
+            // A share session pre-authorised when the floating window started: read at once.
+            ScreenCaptureService.isActive -> runLiveCapture()
+            SilentCapture.available -> runSilentCapture()
+            else -> askForConsent()
+        }
     }
 
     private val projectionConsent = registerForActivityResult(
@@ -55,14 +62,14 @@ class InstantCaptureActivity : ComponentActivity() {
         val data = result.data
         if (result.resultCode != RESULT_OK || data == null) {
             Log.i(TAG, "instant capture consent denied")
-            finishWith(null, "已取消截屏授权")
+            finishWith(null, getString(R.string.capture_failure_no_consent))
             return@registerForActivityResult
         }
         val started = ScreenCaptureService.start(
             applicationContext, result.resultCode, data, pendingRegion
         )
         if (!started) {
-            finishWith(null, "无法启动截屏服务")
+            finishWith(null, getString(R.string.capture_failure_service_dead))
             return@registerForActivityResult
         }
         runCapture()
@@ -81,6 +88,75 @@ class InstantCaptureActivity : ComponentActivity() {
         projectionConsent.launch(manager.createScreenCaptureIntent())
     }
 
+    /** Consent-free path: the accessibility service screenshots the framed region directly. */
+    private fun runSilentCapture() {
+        lifecycleScope.launch {
+            Log.i(TAG, "instant capture: silent path")
+            handleFrame(SilentCapture.captureFrame(pendingRegion))
+        }
+    }
+
+    /**
+     * The pre-authorised share session is already mirroring the display, so the framed region is
+     * read off the current screen immediately — no dialog, no service start-up, no stale frame.
+     */
+    private fun runLiveCapture() {
+        lifecycleScope.launch {
+            Log.i(TAG, "instant capture: live share session")
+            delay(SETTLE_MS)
+            val result = withContext(Dispatchers.IO) {
+                ScreenCaptureService.captureFrame(pendingRegion)
+            }
+            // Kept alive while the floating window runs: the next capture reuses the session.
+            if (!FloatingAssistantService.isRunning) ScreenCaptureService.stop(applicationContext)
+            handleFrame(result)
+        }
+    }
+
+    /**
+     * The frame goes on to be read as an image first, with on-device text recognition as the
+     * fallback — [FrameAnalysis] decides which one serves it, in the full app. Every frame is
+     * worth an analysis attempt, so nothing is turned away here.
+     */
+    private fun handleFrame(result: FrameResult) {
+        lifecycleScope.launch {
+            val frame = result as? FrameResult.Frame
+            if (frame == null) {
+                deliver(CaptureResult.Failure((result as FrameResult.Failure).reason))
+                return@launch
+            }
+            deliverImage(frame.bitmap)
+        }
+    }
+
+    private suspend fun deliverImage(bitmap: Bitmap) {
+        val path = CaptureDispatch.toCacheFile(applicationContext, bitmap)
+        if (path == null) {
+            deliver(CaptureResult.Failure(CaptureFailure.UNKNOWN))
+            return
+        }
+        Log.i(TAG, "instant capture: frame staged for direct image analysis")
+        val intent = Intent(this@InstantCaptureActivity, MainActivity::class.java).addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        )
+        intent.putExtra(CaptureDispatch.EXTRA_CAPTURED_IMAGE, path)
+        startActivity(intent)
+        finish()
+    }
+
+    private fun deliver(result: CaptureResult) {
+        when (result) {
+            is CaptureResult.Success -> {
+                Log.i(TAG, "instant capture: chars=${result.text.length}")
+                finishWith(result.text, null)
+            }
+            is CaptureResult.Failure -> {
+                Log.i(TAG, "instant capture failed: ${result.reason}")
+                finishWith(null, getString(captureFailureMessage(result.reason)))
+            }
+        }
+    }
+
     /** Mirrors the in-app flow, but owned by this activity so it survives the dialogs. */
     private fun runCapture() {
         lifecycleScope.launch {
@@ -91,14 +167,16 @@ class InstantCaptureActivity : ComponentActivity() {
             }
             delay(SETTLE_MS)
             val active = ScreenCaptureService.isActive
-            val text = if (active) {
+            val result = if (active) {
                 withContext(Dispatchers.IO) {
-                    ScreenCaptureService.captureText(ScreenCaptureService.requestedRegion())
+                    ScreenCaptureService.captureFrame(ScreenCaptureService.requestedRegion())
                 }
-            } else null
-            ScreenCaptureService.stop(applicationContext)
-            Log.i(TAG, "instant capture: active=$active chars=${text?.length ?: 0}")
-            finishWith(text, if (active) null else "没有拿到截屏权限或截屏服务未启动")
+            } else {
+                FrameResult.Failure(CaptureFailure.SERVICE_DEAD)
+            }
+            // Kept alive while the floating window runs: the next capture reuses the session.
+            if (!FloatingAssistantService.isRunning) ScreenCaptureService.stop(applicationContext)
+            handleFrame(result)
         }
     }
 
@@ -109,10 +187,8 @@ class InstantCaptureActivity : ComponentActivity() {
         )
         if (!text.isNullOrBlank()) {
             intent.putExtra(EXTRA_CAPTURED_TEXT, text)
-        } else if (failure != null) {
-            intent.putExtra(EXTRA_FAILURE, failure)
         } else {
-            intent.putExtra(EXTRA_FAILURE, "这次截屏没有识别到文字，请让聊天内容完整显示后重试")
+            intent.putExtra(EXTRA_FAILURE, failure ?: getString(R.string.capture_failure_no_text))
         }
         startActivity(intent)
         finish()

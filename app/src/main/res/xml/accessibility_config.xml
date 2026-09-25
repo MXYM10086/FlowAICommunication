@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Deliberately minimal: the service reads no window content, performs no gestures and discards
+  every event. It exists only so the platform has a takeScreenshot() caller, which is what lets a
+  confirmed region be captured without the per-session MediaProjection consent dialog.
+  canTakeScreenshot is the capability the platform checks before honouring that call; without it
+  takeScreenshot throws SecurityException.
+-->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:notificationTimeout="100"
+    android:canRetrieveWindowContent="false"
+    android:canPerformGestures="false"
+    android:canTakeScreenshot="true"
+    android:description="@string/accessibility_service_description" />

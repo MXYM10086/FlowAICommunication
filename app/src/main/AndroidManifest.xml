@@ -14,6 +14,13 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Screenshot capture (V2). Android 14 requires this permission AND the service type below. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!--
+      Calendar write (V3). Requested at runtime from the action screen only, right before the
+      user confirms writing a recognized event; denial is handled in-app with an explanation
+      dialog and a copy-to-memo fallback.
+    -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
     <application android:allowBackup="false" android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher" android:dataExtractionRules="@xml/data_extraction_rules"
         android:networkSecurityConfig="${networkSecurityConfig}"
@@ -79,6 +86,7 @@
             android:exported="true"
             android:excludeFromRecents="true"
             android:noHistory="true"
+            android:taskAffinity=""
             android:theme="@style/Theme.FlowAI.RegionPicker">
             <intent-filter android:label="@string/process_text_label">
                 <action android:name="android.intent.action.PROCESS_TEXT" />
@@ -109,24 +117,74 @@
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
         <!--
+          Silent screenshot channel. Once the user enables it in system settings, a confirmed
+          region is captured without the per-session MediaProjection consent dialog that Android
+          14+ shows on every capture. BIND_ACCESSIBILITY_SERVICE means only the system can bind;
+          the configuration switches off window content and gestures, and the service screenshots
+          nothing except when a capture is requested.
+        -->
+        <service
+            android:name=".system.CaptureAccessibilityService"
+            android:exported="true"
+            android:label="@string/accessibility_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_config" />
+        </service>
+        <!--
           Region picker. Theme.NoDisplay is wrong here (it must stay visible to pick from), but it
           is translucent so the app underneath is not destroyed, and excluded from recents.
+          taskAffinity is empty so a NEW_TASK launch gets a task with no opaque activity below:
+          inside the app's own task a translucent window shows the MainActivity underneath
+          through it, and the capture would photograph FlowAI instead of the chat.
         -->
         <activity
             android:name=".system.RegionPickerActivity"
             android:exported="false"
             android:launchMode="singleTop"
             android:excludeFromRecents="true"
+            android:taskAffinity=""
             android:theme="@style/Theme.FlowAI.RegionPicker" />
         <!--
           Capture started from the assistant panel. Translucent so the app being captured stays
           visible; the panel hides itself first so the overlay is not part of the frame.
+          Empty taskAffinity for the same reason as the picker: nothing opaque may sit below.
         -->
         <activity
             android:name=".system.CaptureForPanelActivity"
             android:exported="false"
             android:launchMode="singleTop"
             android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.FlowAI.RegionPicker" />
+        <!--
+          The translucent capture chain (frame -> consent -> capture) behind the in-app capture
+          button. It runs in a task of its own while the main task sits in the background, so the
+          picker frames the app the user was reading; the result returns to MainActivity as an
+          intent extra. Empty taskAffinity, as for the other translucent activities above.
+        -->
+        <activity
+            android:name=".system.InstantCaptureActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Theme.FlowAI.RegionPicker" />
+        <!--
+          Screen-share pre-authorisation, started the moment the floating window switches on so
+          later captures need no dialog. UI-less: the system consent dialog is its only screen,
+          and its own task keeps the dialog from dragging the main task forward.
+        -->
+        <activity
+            android:name=".system.ScreenShareGateActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
             android:theme="@style/Theme.FlowAI.RegionPicker" />
     </application>
 </manifest>

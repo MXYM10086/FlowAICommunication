@@ -4,19 +4,32 @@
     <string name="share_target_label">FlowAI 分析沟通</string>
     <!-- Shown in the text-selection toolbar when text is selected in another app. -->
     <string name="process_text_label">用 FlowAI 分析</string>
-    <!-- Floating assistant (V2 entry point). -->
-    <string name="floating_notification_title">FlowAI 助手已就绪</string>
-    <string name="floating_notification_text">点悬浮球可就地打开助手面板；助手不会读取屏幕内容</string>
-    <string name="floating_channel_name">悬浮入口</string>
-    <string name="floating_channel_desc">在其他应用上方显示 FlowAI 悬浮球</string>
+    <!-- Floating assistant (V2 entry point): a desk pet since 1.1.0. -->
+    <string name="floating_notification_title">FlowAI 桌宠已就绪</string>
+    <string name="floating_notification_text">点桌宠可就地打开助手面板，长按可以换皮肤；助手不会读取屏幕内容</string>
+    <string name="floating_channel_name">悬浮桌宠</string>
+    <string name="floating_channel_desc">在其他应用上方显示 FlowAI 桌宠</string>
+    <!-- Shown after a long-press cycles the desk pet's skin. -->
+    <string name="pet_skin_toast">新皮肤：%1$s</string>
     <!-- Screenshot capture (V2). -->
-    <string name="capture_channel_name">截屏识别</string>
-    <string name="capture_channel_desc">正在截取屏幕以识别聊天内容</string>
-    <string name="capture_notification_title">正在识别屏幕内容</string>
-    <string name="capture_notification_text">仅在本次识别期间截屏；识别完成后立即释放</string>
+    <string name="capture_channel_name">截屏分析</string>
+    <string name="capture_channel_desc">屏幕共享会话运行中，仅在你确认截屏时识别</string>
+    <string name="capture_notification_title">FlowAI 屏幕共享已开启</string>
+    <string name="capture_notification_text">仅在你框选并确认截屏时识别一次；关闭桌宠即释放共享</string>
     <!-- Region picker: frame the conversation before capture. -->
     <string name="region_hint">拖动框选聊天区域；只识别框内内容</string>
     <string name="region_confirm">识别框选区域</string>
     <string name="region_full_screen">整屏识别</string>
     <string name="region_cancel">取消</string>
+    <!-- Capture failure guidance, one string per CaptureFailure reason. -->
+    <string name="capture_failure_no_consent">已取消截屏授权</string>
+    <string name="capture_failure_black_frame">当前页面禁止截屏，请改用分享文字功能</string>
+    <string name="capture_failure_no_text">没有识别到文字，请确认聊天内容完整显示后重试</string>
+    <string name="capture_failure_ocr_timeout">识别超时，请重试</string>
+    <string name="capture_failure_service_dead">截屏服务未启动，请重试</string>
+    <string name="capture_failure_no_remote_engine">读图分析需要远程模型：请在「分析引擎设置」中填写支持图片输入的模型并同意上传后重试</string>
+    <string name="capture_failure_unknown">识别失败，请重试</string>
+    <!-- Accessibility capture service: the silent screenshot channel. -->
+    <string name="accessibility_service_label">FlowAI 静音截屏</string>
+    <string name="accessibility_service_description">在你框选区域并确认后截取一次屏幕，用于分析聊天内容；不持续录屏，不读取窗口内容或操作。</string>
 </resources>

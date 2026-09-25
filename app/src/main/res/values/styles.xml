@@ -2,8 +2,8 @@
     <style name="Theme.FlowAI.Base" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:statusBarColor">#F6F8FC</item>
-        <item name="android:navigationBarColor">#17233A</item>
+        <item name="android:statusBarColor">@color/flow_background</item>
+        <item name="android:navigationBarColor">@color/flow_background</item>
         <item name="android:windowActionModeOverlay">true</item>
     </style>
     <style name="Theme.FlowAI" parent="Theme.FlowAI.Base" />

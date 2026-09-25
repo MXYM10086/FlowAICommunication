@@ -15,6 +15,43 @@ import android.content.SharedPreferences
 enum class EngineMode { LOCAL, REMOTE }
 
 /**
+ * The wire protocol the configured endpoint speaks.
+ *
+ * "Support any model" is really "support any of the handful of protocols models hide behind":
+ * almost every provider (DeepSeek, Qwen, GLM, Moonshot, OpenAI, a local Ollama…) accepts the
+ * OpenAI-compatible shape, while Anthropic and Google ship their own. One selector here covers
+ * all of them without a plugin system.
+ */
+enum class ApiFormat(val label: String) {
+    /** `POST {url}` with `messages`/`choices` — DeepSeek, Qwen, GLM, Moonshot, OpenAI, Ollama… */
+    OPENAI_COMPAT("OpenAI 兼容接口"),
+
+    /** `POST {base}/v1/messages` with `x-api-key` — Claude models. */
+    ANTHROPIC("Anthropic Messages"),
+
+    /** `POST {base}/models/{model}:generateContent` — Gemini models. */
+    GEMINI("Gemini generateContent")
+}
+
+/**
+ * A provider the settings screen can fill in with one tap: protocol, endpoint and a current
+ * model name. The key is never part of a preset — it stays the user's own credential.
+ */
+data class ProviderPreset(val name: String, val format: ApiFormat, val url: String, val model: String)
+
+/** Common destinations, so "support various models" is a tap rather than a docs hunt. */
+val PROVIDER_PRESETS = listOf(
+    ProviderPreset("DeepSeek", ApiFormat.OPENAI_COMPAT, "https://api.deepseek.com/chat/completions", "deepseek-chat"),
+    ProviderPreset("通义千问", ApiFormat.OPENAI_COMPAT, "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions", "qwen-plus"),
+    ProviderPreset("智谱 GLM", ApiFormat.OPENAI_COMPAT, "https://open.bigmodel.cn/api/paas/v4/chat/completions", "glm-4-plus"),
+    ProviderPreset("Moonshot", ApiFormat.OPENAI_COMPAT, "https://api.moonshot.cn/v1/chat/completions", "moonshot-v1-8k"),
+    ProviderPreset("OpenAI", ApiFormat.OPENAI_COMPAT, "https://api.openai.com/v1/chat/completions", "gpt-4o"),
+    ProviderPreset("Ollama 本机", ApiFormat.OPENAI_COMPAT, "http://localhost:11434/v1/chat/completions", "qwen2.5"),
+    ProviderPreset("Claude", ApiFormat.ANTHROPIC, "https://api.anthropic.com", "claude-sonnet-4-5"),
+    ProviderPreset("Gemini", ApiFormat.GEMINI, "https://generativelanguage.googleapis.com/v1beta", "gemini-2.0-flash")
+)
+
+/**
  * Engine configuration.
  *
  * The key lives in this app's private preferences, entered by the user rather than compiled in.
@@ -26,6 +63,8 @@ data class EngineSettings(
     val apiKey: String = "",
     val providerUrl: String = DEFAULT_PROVIDER_URL,
     val model: String = DEFAULT_MODEL,
+    /** The wire protocol [providerUrl] speaks; decides how requests are built. */
+    val apiFormat: ApiFormat = ApiFormat.OPENAI_COMPAT,
     /** Epoch millis when the user agreed to send text off the device; 0 means never agreed. */
     val consentedAt: Long = 0L
 ) {
@@ -47,8 +86,9 @@ data class EngineSettings(
 /** Reads and writes [EngineSettings] in private preferences. */
 class EngineSettingsStore(context: Context) {
 
+    private val appContext: Context = context.applicationContext
     private val prefs: SharedPreferences =
-        context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun load(): EngineSettings {
         val defaults = EngineSettings()
@@ -59,6 +99,9 @@ class EngineSettingsStore(context: Context) {
             apiKey = prefs.getString(KEY_API_KEY, "").orEmpty(),
             providerUrl = prefs.getString(KEY_PROVIDER_URL, defaults.providerUrl).orEmpty(),
             model = prefs.getString(KEY_MODEL, defaults.model).orEmpty().ifBlank { defaults.model },
+            apiFormat = runCatching {
+                ApiFormat.valueOf(prefs.getString(KEY_API_FORMAT, defaults.apiFormat.name)!!)
+            }.getOrDefault(defaults.apiFormat),
             consentedAt = prefs.getLong(KEY_CONSENT, 0L)
         )
     }
@@ -75,6 +118,7 @@ class EngineSettingsStore(context: Context) {
             .putString(KEY_API_KEY, settings.apiKey.trim())
             .putString(KEY_PROVIDER_URL, settings.providerUrl.trim())
             .putString(KEY_MODEL, settings.model.trim())
+            .putString(KEY_API_FORMAT, settings.apiFormat.name)
             .putLong(KEY_CONSENT, if (sameDestination) settings.consentedAt else 0L)
             .apply()
     }
@@ -92,7 +136,10 @@ class EngineSettingsStore(context: Context) {
      */
     fun engineOrLocal(): LlmService {
         val settings = load()
-        return if (settings.canUseRemote) RemoteLlmService(settingsProvider = { load() })
+        return if (settings.canUseRemote) RemoteLlmService(
+            settingsProvider = { load() },
+            styleProvider = { ReplyStyleStore(appContext).load() }
+        )
         else MockLlmService()
     }
 
@@ -102,6 +149,7 @@ class EngineSettingsStore(context: Context) {
         private const val KEY_API_KEY = "apiKey"
         private const val KEY_PROVIDER_URL = "providerUrl"
         private const val KEY_MODEL = "model"
+        private const val KEY_API_FORMAT = "apiFormat"
         private const val KEY_CONSENT = "consentedAt"
 
         /**
@@ -113,9 +161,12 @@ class EngineSettingsStore(context: Context) {
          */
         fun engineFactory(context: Context): Pair<() -> LlmService, () -> String> {
             val store = EngineSettingsStore(context.applicationContext)
+            val styles = ReplyStyleStore(context.applicationContext)
             val signature = {
                 val s = store.load()
-                "${s.mode}|${s.providerUrl}|${s.model}|${s.apiKey.hashCode()}|${s.consentedAt}"
+                // The persona is part of what a cached analysis was produced with, so switching it
+                // must drop the cached engine just like any other configuration change.
+                "${s.mode}|${s.providerUrl}|${s.model}|${s.apiKey.hashCode()}|${s.consentedAt}|${s.apiFormat}|${styles.load().name}"
             }
             return ({ store.engineOrLocal() }) to signature
         }

@@ -3,6 +3,7 @@ package com.flowai.communication.system
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.media.projection.MediaProjectionManager
 import android.os.Bundle
 import android.util.Log
@@ -10,7 +11,12 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.lifecycle.lifecycleScope
 import com.flowai.communication.MainActivity
+import com.flowai.communication.R
+import com.flowai.communication.captureFailureMessage
+import com.flowai.communication.domain.CaptureFailure
 import com.flowai.communication.domain.CaptureRegion
+import com.flowai.communication.domain.CaptureResult
+import com.flowai.communication.domain.FrameResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -40,7 +46,12 @@ class CaptureForPanelActivity : ComponentActivity() {
             null // cancelled, or "whole screen"
         }
         Log.i(TAG, "panel capture region: ${pendingRegion ?: "full screen"}")
-        askForConsent()
+        when {
+            // A share session pre-authorised when the floating window started: read at once.
+            ScreenCaptureService.isActive -> runLiveCapture()
+            SilentCapture.available -> runSilentCapture()
+            else -> askForConsent()
+        }
     }
 
     private val projectionConsent = registerForActivityResult(
@@ -49,11 +60,11 @@ class CaptureForPanelActivity : ComponentActivity() {
         val data = result.data
         if (result.resultCode != RESULT_OK || data == null) {
             Log.i(TAG, "panel capture consent denied")
-            onFinished(null, "已取消截屏授权")
+            onFinished(null, getString(R.string.capture_failure_no_consent))
             return@registerForActivityResult
         }
         if (!ScreenCaptureService.start(applicationContext, result.resultCode, data, pendingRegion)) {
-            onFinished(null, "无法启动截屏服务")
+            onFinished(null, getString(R.string.capture_failure_service_dead))
             return@registerForActivityResult
         }
         runCapture()
@@ -72,6 +83,81 @@ class CaptureForPanelActivity : ComponentActivity() {
             .let { projectionConsent.launch(it) }
     }
 
+    /** Consent-free path: the accessibility service screenshots the framed region directly. */
+    private fun runSilentCapture() {
+        lifecycleScope.launch {
+            Log.i(TAG, "panel capture: silent path")
+            handleFrame(SilentCapture.captureFrame(pendingRegion))
+        }
+    }
+
+    /**
+     * The pre-authorised share session is already mirroring the display, so the framed region is
+     * read off the current screen immediately — no dialog, no service start-up, no stale frame.
+     */
+    private fun runLiveCapture() {
+        lifecycleScope.launch {
+            Log.i(TAG, "panel capture: live share session")
+            delay(SETTLE_MS)
+            val result = withContext(Dispatchers.IO) {
+                ScreenCaptureService.captureFrame(pendingRegion)
+            }
+            // The session belongs to the floating window and outlives this single read.
+            handleFrame(result)
+        }
+    }
+
+    /**
+     * The framed picture is analysed *in place*: the staged frame goes to the floating panel, which
+     * reads it (image first, on-device text as fallback) and shows the result over the chat app —
+     * the user never leaves the conversation. Only when the floating service is gone does the frame
+     * take the old road into the full app.
+     */
+    private fun handleFrame(result: FrameResult) {
+        lifecycleScope.launch {
+            val frame = result as? FrameResult.Frame
+            if (frame == null) {
+                handle(CaptureResult.Failure((result as FrameResult.Failure).reason))
+                return@launch
+            }
+            val path = CaptureDispatch.toCacheFile(applicationContext, frame.bitmap)
+            if (path != null && FloatingAssistantService.deliverCaptureImage(path)) {
+                Log.i(TAG, "panel capture: frame handed to the panel for in-place analysis")
+                finish()
+                return@launch
+            }
+            if (path == null) {
+                onFinished(null, getString(R.string.capture_failure_unknown))
+                return@launch
+            }
+            Log.w(TAG, "panel capture: no live panel; routing the frame to the full app")
+            routeImageToApp(path)
+        }
+    }
+
+    /** Fallback road: the full app analyses the staged frame in its own flow. */
+    private fun routeImageToApp(path: String) {
+        val intent = Intent(this, MainActivity::class.java).addFlags(
+            Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        )
+        intent.putExtra(CaptureDispatch.EXTRA_CAPTURED_IMAGE, path)
+        startActivity(intent)
+        finish()
+    }
+
+    private fun handle(result: CaptureResult) {
+        when (result) {
+            is CaptureResult.Success -> {
+                Log.i(TAG, "panel capture: chars=${result.text.length}")
+                onFinished(result.text, null)
+            }
+            is CaptureResult.Failure -> {
+                Log.i(TAG, "panel capture failed: ${result.reason}")
+                onFinished(null, getString(captureFailureMessage(result.reason)))
+            }
+        }
+    }
+
     private fun runCapture() {
         lifecycleScope.launch {
             var waited = 0L
@@ -81,20 +167,16 @@ class CaptureForPanelActivity : ComponentActivity() {
             }
             delay(SETTLE_MS)
             val active = ScreenCaptureService.isActive
-            val text = if (active) {
+            val result = if (active) {
                 withContext(Dispatchers.IO) {
-                    ScreenCaptureService.captureText(ScreenCaptureService.requestedRegion())
+                    ScreenCaptureService.captureFrame(ScreenCaptureService.requestedRegion())
                 }
-            } else null
-            ScreenCaptureService.stop(applicationContext)
-            Log.i(TAG, "panel capture: active=$active chars=${text?.length ?: 0}")
-            onFinished(
-                text,
-                when {
-                    !active -> "没有拿到截屏权限或截屏服务未启动"
-                    else -> null
-                }
-            )
+            } else {
+                FrameResult.Failure(CaptureFailure.SERVICE_DEAD)
+            }
+            // Kept alive while the floating window runs: the next capture reuses the session.
+            if (!FloatingAssistantService.isRunning) ScreenCaptureService.stop(applicationContext)
+            handleFrame(result)
         }
     }
 
@@ -112,7 +194,7 @@ class CaptureForPanelActivity : ComponentActivity() {
     private fun onFinished(text: String?, failure: String?) {
         val message = when {
             !text.isNullOrBlank() -> null
-            else -> failure ?: "这次截屏没有识别到文字，请让聊天内容完整显示后重试"
+            else -> failure ?: getString(R.string.capture_failure_no_text)
         }
 
         if (FloatingAssistantService.deliverCapture(text, message)) {

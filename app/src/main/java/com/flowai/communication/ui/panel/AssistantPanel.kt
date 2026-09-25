@@ -21,6 +21,9 @@ import com.flowai.communication.data.model.AnalysisResult
 import com.flowai.communication.data.model.ConversationStage
 import com.flowai.communication.data.model.NextAction
 import com.flowai.communication.data.model.ReplyCandidate
+import com.flowai.communication.domain.ChatRole
+import com.flowai.communication.domain.ChatTurn
+import com.flowai.communication.ui.components.ChatBubble
 
 /**
  * What the engine produced for one chosen action.
@@ -48,6 +51,11 @@ class AssistantPanelState(initialText: String? = null) {
     var executed by mutableStateOf<ExecutedAction?>(null)
     var error by mutableStateOf<String?>(null)
     var copied by mutableStateOf<String?>(null)
+    /** True while a captured frame is being read; the panel shows progress instead of buttons. */
+    var analyzing by mutableStateOf(false)
+    /** Follow-up turns about the analysis on screen; cleared with the analysis. */
+    var chat by mutableStateOf<List<ChatTurn>>(emptyList())
+    var chatBusy by mutableStateOf(false)
 }
 
 /**
@@ -57,9 +65,10 @@ class AssistantPanelState(initialText: String? = null) {
  * shows what the conversation is doing, and offers the next actions plus candidate replies,
  * without navigating away.
  *
- * It states plainly that the user supplies the text. The assistant never reads the screen, which
- * keeps it on the right side of both the platform's screen-share protection and the product's
- * Just-in-Time Context rule.
+ * It states plainly that only the user-chosen region is read. Captures happen on demand through
+ * the panel's own button (or a pet tap), and the frame is released right after analysis, which
+ * keeps the panel on the right side of both the platform's screen-share protection and the
+ * product's Just-in-Time Context rule.
  */
 @Composable
 fun AssistantPanel(
@@ -77,6 +86,8 @@ fun AssistantPanel(
     capturedText: String? = null,
     /** Failure reported by a capture, if any. */
     captureFailure: String? = null,
+    /** Asks the engine a follow-up question about the analysis on screen. */
+    onChat: (String) -> Unit = {},
     /**
      * Upper bound for the panel's height.
      *
@@ -94,17 +105,22 @@ fun AssistantPanel(
     var executed by state::executed
     var error by state::error
     var copied by state::copied
+    var analyzing by state::analyzing
+    var chat by state::chat
+    var chatBusy by state::chatBusy
     val scroll = rememberScrollState()
     val scope = rememberCoroutineScope()
     // Engine calls may reach a network service, so the buttons need a progress state; otherwise a
     // slow response looks like a dead button.
     var busy by remember { mutableStateOf(false) }
+    var chatDraft by remember { mutableStateOf("") }
 
     // A capture fills the input box, replacing whatever was there.
     LaunchedEffect(capturedText) {
         if (!capturedText.isNullOrBlank()) {
             input = capturedText.take(20_000)
             result = null; chosen = null; executed = null; copied = null; error = null
+            chat = emptyList()
         }
     }
     LaunchedEffect(captureFailure) {
@@ -127,7 +143,17 @@ fun AssistantPanel(
                 Text("FlowAI 助手", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                 TextButton(onClick = onClose) { Text("收起") }
             }
-            PanelNote("助手不会读取屏幕内容；请把要分析的聊天粘贴到下面。")
+            PanelNote("截屏只读取你框选的区域，用完立即释放；也可以直接粘贴聊天文字。")
+            if (analyzing) {
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Text("正在识别截屏文字并分析，稍候…", style = MaterialTheme.typography.bodyMedium)
+                }
+            }
 
             val analyzed = result
             if (analyzed == null) {
@@ -261,10 +287,47 @@ fun AssistantPanel(
                     }
                 }
 
+                Spacer(Modifier.height(12.dp))
+                Text("就这次分析追问", style = MaterialTheme.typography.titleMedium)
+                chat.forEach { turn ->
+                    Spacer(Modifier.height(6.dp))
+                    ChatBubble(
+                        label = if (turn.role == ChatRole.USER) "我" else "模型",
+                        text = turn.text,
+                        mine = turn.role == ChatRole.USER
+                    )
+                }
+                if (chatBusy) {
+                    Spacer(Modifier.height(6.dp))
+                    ChatBubble("模型", "正在思考…", false)
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    verticalAlignment = Alignment.Bottom,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = chatDraft,
+                        onValueChange = { chatDraft = it },
+                        modifier = Modifier.weight(1f),
+                        minLines = 1,
+                        maxLines = 3,
+                        placeholder = { Text("追问这次分析…") }
+                    )
+                    Button(
+                        onClick = {
+                            onChat(chatDraft)
+                            chatDraft = ""
+                        },
+                        enabled = chatDraft.isNotBlank() && !chatBusy
+                    ) { Text("发送") }
+                }
+
                 Spacer(Modifier.height(10.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = {
                         result = null; chosen = null; executed = null; copied = null
+                        chat = emptyList()
                     }) { Text("换一段") }
                     OutlinedButton(onClick = {
                         onCopy(clipboard, "状态与建议", summarize(analyzed)) { copied = it }

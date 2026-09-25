@@ -12,7 +12,7 @@ import com.flowai.communication.system.*
 class FlowEngineTest {
     private val parser = PlainTextDialogueParser()
     private val mock = MockLlmService()
-    private fun repo() = ConversationRepository(parser, mock, mock, mock)
+    private fun repo() = ConversationRepository(parser, mock, mock, mock, mock)
     @Test fun parsesDemoAInOrder() {
         val messages = parser.parse(DemoConversations.A)
         assertEquals(listOf(Speaker.OTHER, Speaker.ME, Speaker.OTHER), messages.map { it.speaker })
